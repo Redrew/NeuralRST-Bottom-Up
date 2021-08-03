@@ -6,13 +6,14 @@ from datetime import datetime
 sys.path.append(".")
 
 import argparse
+import random
 import torch
 from torch.optim import Adam, SGD, Adamax
 from torch.nn.utils import clip_grad_norm_
 
 from in_out.reader import Reader
 from in_out.util import load_embedding_dict, get_logger
-from in_out.preprocess import construct_embedding_table
+from in_out.preprocess import construct_embedding
 from in_out.preprocess import create_alphabet
 from in_out.preprocess import validate_gold_actions, validate_gold_top_down
 from in_out.preprocess import batch_data_variable
@@ -23,6 +24,17 @@ from models.architecture import MainArchitecture
 
 UNK_ID=0
 main_path=''
+
+
+def load_word_embedding_and_tokenizer(word_alpha, config):
+    if config.static_word_embedding:
+        pretrained_embed, word_dim = load_embedding_dict(config.word_embedding, config.word_embedding_file)
+        assert (word_dim == config.word_dim)
+        embedding = construct_embedding(word_alpha, config.word_dim, config.freeze, pretrained_embed)
+        tokenizer = None
+    elif config.word_embedding == "bert":
+        raise NotImplementedError("BERT embedding is not supported yet")
+    return embedding, tokenizer
 
 
 def set_label_action(dictionary, instances):
@@ -64,6 +76,7 @@ def predict(network, instances, vocab, config, logger):
     logger.info("R (ori): " + relation_ori.print_metric())
     logger.info("F (ori): " + full_ori.print_metric())
     return span, nuclear, relation, full, span_ori, nuclear_ori, relation_ori, full_ori
+
 
 def main():
     start_a = time.time()
@@ -129,6 +142,7 @@ def main():
     args = args_parser.parse_args()
     config = Config(args)
 
+    random.seed(config.seed)
     torch.manual_seed(config.seed)
     if config.use_gpu:
         torch.cuda.manual_seed_all(config.seed)
@@ -144,10 +158,6 @@ def main():
         logger.info("This is using STATIC oracle")
         model_name = 'static_' + config.model_name
     
-    logger.info("Load word embedding, will take 2 minutes")
-    pretrained_embed, word_dim = load_embedding_dict(config.word_embedding, config.word_embedding_file)
-    assert (word_dim == config.word_dim)
-
     logger.info("Reading Train start")
     reader = Reader(config.train_path, config.train_syn_feat_path)
     train_instances  = reader.read_data()
@@ -165,10 +175,14 @@ def main():
     logger.info('Checking Gold Labels for top-down parser....')
     validate_gold_top_down(train_instances)
     
-    word_table = construct_embedding_table(word_alpha, config.word_dim, config.freeze, pretrained_embed)
-    tag_table = construct_embedding_table(tag_alpha, config.tag_dim, config.freeze)
-    etype_table = construct_embedding_table(etype_alpha, config.etype_dim, config.freeze)
-    
+    tag_embedd = construct_embedding(tag_alpha, config.tag_dim, config.freeze)
+    etype_embedd = construct_embedding(etype_alpha, config.etype_dim, config.freeze)
+
+    logger.info("Load word embedding, will take 2 minutes")
+    word_embedd, word_tokenizer = load_word_embedding_and_tokenizer(word_alpha, config)
+    if word_tokenizer is not None:
+        word_tokenizer.tokenize(train_instances)
+
     logger.info("Finish reading train data by:" + str(round(time.time() - start_a, 2)) + 'sec')
 
     # DEV data processing
@@ -182,7 +196,7 @@ def main():
     logger.info('Finish reading test instances')
 
     torch.set_num_threads(4)
-    network = MainArchitecture(vocab, config, word_table, tag_table, etype_table) 
+    network = MainArchitecture(vocab, config, word_embedd, tag_embedd, etype_embedd) 
    
     if config.freeze:
         network.word_embedd.freeze()

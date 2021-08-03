@@ -1,6 +1,8 @@
 import os
 import torch
 
+STATIC_EMBEDDINGS = ["word2vec", "glove", "senna", "sskip", "polyglot"]
+
 class Config(object):
     def __init__(self, args):
         if args is None:
@@ -9,6 +11,7 @@ class Config(object):
         self.use_dynamic_oracle = args.use_dynamic_oracle == 1
         self.flag_oracle = False
         self.word_embedding = args.word_embedding
+        self.static_word_embedding = self.word_embedding in STATIC_EMBEDDINGS
         self.word_embedding_file = args.word_embedding_file
     
         self.train_path = args.train

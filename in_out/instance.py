@@ -194,6 +194,7 @@ class EDU(object):
         self.end_index = end_index # int
         self.etype = '' # string
         self.words = [] # list of word (string)
+        self.tokens = [] # list of tokens (int), for contextual word embeddings
         self.tags = [] # list of tag (string)
         self.syntax_features = []
 

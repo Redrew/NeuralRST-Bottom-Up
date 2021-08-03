@@ -6,6 +6,7 @@ import copy
 
 from models.metric import Metric
 from models.alphabet import Alphabet
+from modules.embedding import Embedding
 from in_out.util import lower_with_digit_transform
 from transition.state import CState
 from torch.autograd import Variable
@@ -27,6 +28,12 @@ def construct_embedding_table(alpha, hidden_size, freeze, pretrained_embed = Non
             embedding = np.random.uniform(-scale, scale, [1, hidden_size]).astype(np.float32)
         table[index, :] = embedding
     return torch.from_numpy(table)
+
+
+def construct_embedding(alpha, hidden_size, freeze, pretrained_embed = None):
+    table = construct_embedding_table(alpha, hidden_size, freeze, pretrained_embed)
+    embedding = Embedding(alpha.size(), hidden_size, table)
+    return embedding
 
 
 def create_alphabet(instances, alphabet_directory, logger):
@@ -166,6 +173,7 @@ def validate_gold_top_down(instances):
 
 
 def batch_data_variable(data, indices, vocab, config, is_training=True):
+    tokenize_words = not config.static_word_embedding
     batch_size  = len(indices)
     indices = indices.tolist()
     batch = data[indices]

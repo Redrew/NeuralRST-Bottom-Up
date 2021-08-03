@@ -3,27 +3,21 @@ __author__ = 'fajri'
 import copy, math
 import operator
 import numpy as np
-import random
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 from in_out.instance import CResult, Gold
 from models.metric import Metric
-from modules.embedding import Embedding
 from modules.layer import *
 
 class MainArchitecture(nn.Module):
-    def __init__(self, vocab, config, embedd_word=None, embedd_tag=None, embedd_etype=None):
+    def __init__(self, vocab, config, word_embedd, tag_embedd, etype_embedd):
         super(MainArchitecture, self).__init__()
-        random.seed(config.seed)
         
-        num_embedding_word = vocab.word_alpha.size()
-        num_embedding_tag = vocab.tag_alpha.size()
-        num_embedding_etype = vocab.etype_alpha.size()
-        self.word_embedd = Embedding(num_embedding_word, config.word_dim, embedd_word)
-        self.tag_embedd = Embedding(num_embedding_tag, config.tag_dim, embedd_tag)
-        self.etype_embedd = Embedding(num_embedding_etype, config.etype_dim, embedd_etype)
+        self.word_embedd = word_embedd
+        self.tag_embedd = tag_embedd
+        self.etype_embedd = etype_embedd
         
         self.config = config
         self.vocab = vocab
