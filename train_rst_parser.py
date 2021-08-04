@@ -10,6 +10,7 @@ import random
 import torch
 from torch.optim import Adam, SGD, Adamax
 from torch.nn.utils import clip_grad_norm_
+from transformers import BertTokenizer, BertModel
 
 from in_out.reader import Reader
 from in_out.util import load_embedding_dict, get_logger
@@ -21,6 +22,8 @@ from models.metric import Metric
 from models.vocab import Vocab
 from models.config import Config
 from models.architecture import MainArchitecture
+from modules.embedding import ContextualEmbedding
+from modules.tokenizer import Tokenizer
 
 UNK_ID=0
 main_path=''
@@ -33,7 +36,13 @@ def load_word_embedding_and_tokenizer(word_alpha, config):
         embedding = construct_embedding(word_alpha, config.word_dim, config.freeze, pretrained_embed)
         tokenizer = None
     elif config.word_embedding == "bert":
-        raise NotImplementedError("BERT embedding is not supported yet")
+        bert_model = BertModel.from_pretrained('bert-base-uncased')
+        bert_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+        embedding = ContextualEmbedding(bert_model)
+        tokenizer = Tokenizer(bert_tokenizer)
+        assert(embedding.embedding_dim == config.word_dim)
+    else:
+        raise NotImplementedError()
     return embedding, tokenizer
 
 

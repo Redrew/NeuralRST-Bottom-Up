@@ -12,6 +12,7 @@ class Config(object):
         self.flag_oracle = False
         self.word_embedding = args.word_embedding
         self.static_word_embedding = self.word_embedding in STATIC_EMBEDDINGS
+        self.contextual_word_embedding = not self.static_word_embedding
         self.word_embedding_file = args.word_embedding_file
     
         self.train_path = args.train

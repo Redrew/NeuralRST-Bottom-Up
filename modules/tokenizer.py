@@ -6,4 +6,8 @@ class Tokenizer:
         return self.tokenizer(sents, padding=True)["input_ids"]
     
     def tokenize(self, instances):
-        raise NotImplementedError()
+        for instance in instances:
+            for edu in instance.edus:
+                phrase = " ".join(edu.words)
+                edu.tokens = self(phrase)
+        return instances

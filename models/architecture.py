@@ -21,12 +21,15 @@ class MainArchitecture(nn.Module):
         
         self.config = config
         self.vocab = vocab
+        self.static_embedd = config.static_word_embedding
 
-        dim_enc1 = config.word_dim + config.tag_dim
+        dim_enc1 = config.word_dim
+        if self.static_embedd:
+            dim_enc1 += config.tag_dim
         dim_enc2 = config.syntax_dim
         dim_enc3 = config.hidden_size * 4 + config.etype_dim
 
-        self.rnn_word_tag = MyLSTM(input_size=dim_enc1, hidden_size=config.hidden_size, num_layers=config.num_layers, batch_first=True, bidirectional=True, dropout_in=config.drop_prob, dropout_out=config.drop_prob)
+        self.rnn_word = MyLSTM(input_size=dim_enc1, hidden_size=config.hidden_size, num_layers=config.num_layers, batch_first=True, bidirectional=True, dropout_in=config.drop_prob, dropout_out=config.drop_prob)
         self.rnn_syntax = MyLSTM(input_size=dim_enc2, hidden_size=config.hidden_size, num_layers=config.num_layers, batch_first=True, bidirectional=True, dropout_in=config.drop_prob, dropout_out=config.drop_prob)
         self.rnn_edu = MyLSTM(input_size=dim_enc3, hidden_size=config.hidden_size, num_layers=config.num_layers, batch_first=True, bidirectional=True, dropout_in=config.drop_prob, dropout_out=config.drop_prob)
 
@@ -51,23 +54,36 @@ class MainArchitecture(nn.Module):
         self.training = True
         self.epoch = 0
 
+    def run_rnn_word(self, tensor, mask):
+        batch_size, edu_size, word_in_edu, hidden_size = tensor.shape
+        tensor = tensor.view(batch_size * edu_size, word_in_edu, hidden_size)
+        mask = mask.view(batch_size * edu_size, word_in_edu)
+        tensor, hn = self.rnn_word(tensor, mask, None)
+        
+        tensor = tensor.transpose(0,1).contiguous()
+        tensor = tensor.view(batch_size, edu_size, word_in_edu, -1)
+        # tensor = self.dropout_out(tensor)
+        return tensor
+
     def run_rnn_word_tag(self, input_word, input_tag, word_mask):
         word = self.word_embedd(input_word)
         tag = self.tag_embedd(input_tag)
         word = self.dropout_in(word)
         tag = self.dropout_in(tag)
         
-        # apply rnn over EDU
         tensor = torch.cat([word, tag], dim=-1)
-        batch_size, edu_size, word_in_edu, hidden_size = tensor.shape
-        tensor = tensor.view(batch_size * edu_size, word_in_edu, hidden_size)
-        word_mask = word_mask.view(batch_size * edu_size, word_in_edu)
-        tensor, hn = self.rnn_word_tag(tensor, word_mask, None)
-        
-        tensor = tensor.transpose(0,1).contiguous()
-        tensor = tensor.view(batch_size, edu_size, word_in_edu, -1)
-        # tensor = self.dropout_out(tensor)
+        # apply rnn over EDU
+        tensor = self.run_rnn_word(tensor, word_mask)
         return tensor
+    
+    def run_rnn_token(self, input_token, token_mask):
+        tensor = self.word_embedd(input_token, token_mask)
+        tensor = self.dropout_in(tensor)
+        
+        # apply rnn over EDU
+        tensor = self.run_rnn_word(tensor, token_mask)
+        return tensor
+
 
     def run_rnn_syntax(self, syntax, word_mask):
         syntax = self.dropout_in(syntax)
@@ -83,16 +99,17 @@ class MainArchitecture(nn.Module):
         # tensor = self.dropout_out(tensor)
         return tensor
     
-    def run_rnn_edu(self, word_representation, syntax_representation, word_denominator, input_etype, edu_mask):
+    def run_rnn_edu(self, word_representation, syntax_representation, token_denominator, word_denominator, input_etype, edu_mask):
         etype = self.etype_embedd(input_etype)
         etype = self.dropout_in(etype)
        
         # apply average pooling based on EDU span
-        batch_size, edu_size, word_in_edu, hidden_size = word_representation.shape
-        word_representation = word_representation.view(batch_size * edu_size, word_in_edu, -1)
-        edu_representation1 = AvgPooling(word_representation, word_denominator.view(-1))
+        batch_size, edu_size, token_in_edu, hidden_size = word_representation.shape
+        word_representation = word_representation.view(batch_size * edu_size, token_in_edu, -1)
+        edu_representation1 = AvgPooling(word_representation, token_denominator.view(-1))
         edu_representation1 = edu_representation1.view(batch_size, edu_size, -1)
         
+        batch_size, edu_size, word_in_edu, hidden_size = syntax_representation.shape
         syntax_representation = syntax_representation.view(batch_size * edu_size, word_in_edu, -1)
         edu_representation2 = AvgPooling(syntax_representation, word_denominator.view(-1))
         edu_representation2 = edu_representation2.view(batch_size, edu_size, -1)
@@ -114,10 +131,13 @@ class MainArchitecture(nn.Module):
         sent_scores = sent_scores.clone() * segment_mask
         return sent_scores, output * segment_mask.unsqueeze(2)
 
-    def forward_all(self, input_word, input_tag, input_etype, edu_mask, word_mask, word_denominator, syntax):
-        word_tag_output = self.run_rnn_word_tag(input_word, input_tag, word_mask)
+    def forward_all(self, input_word, input_tag, input_etype, edu_mask, token_mask, word_mask, token_denominator, word_denominator, syntax):
+        if self.static_embedd:
+            word_output = self.run_rnn_word_tag(input_word, input_tag, word_mask)
+        else:
+            word_output = self.run_rnn_token(input_word, token_mask)
         syntax_output = self.run_rnn_syntax(syntax, word_mask)
-        tensor = self.run_rnn_edu(word_tag_output, syntax_output, word_denominator, input_etype, edu_mask) 
+        tensor = self.run_rnn_edu(word_output, syntax_output, token_denominator, word_denominator, input_etype, edu_mask) 
         return tensor
 
     def update_eval_metric(self, gold_segmentation_index, nuclear_relation, gold_nuclear_relation, len_golds):
@@ -591,9 +611,9 @@ class MainArchitecture(nn.Module):
         # subset_data = edu_words, edu_tags, edu_types, edu_mask, word_mask, len_edus, word_denominator, edu_syntax,
         # gold_nuclear, gold_relation, gold_segmentation, span, len_golds, depth
         self.epoch = epoch
-        words, tags, etypes, edu_mask, word_mask, len_edus, word_denominator, syntax, \
+        words, tags, etypes, edu_mask, token_mask, word_mask, len_edus, token_denominator, word_denominator, syntax, \
             gold_nuclear, gold_relation, gold_nuclear_relation, gold_segmentation, span, len_golds, depth = subset_data
-        encoder_output = self.forward_all(words, tags, etypes, edu_mask, word_mask, word_denominator, syntax)
+        encoder_output = self.forward_all(words, tags, etypes, edu_mask, token_mask, word_mask, token_denominator, word_denominator, syntax)
         if self.training:
             if self.config.flag_oracle:
                 cost = self.decode_training_dynamic_oracle(encoder_output, gold_nuclear_relation, gold_segmentation, span, len_golds, depth)

@@ -112,21 +112,27 @@ class Embedding(nn.Module):
         s += ')'
         return s.format(name=self.__class__.__name__, **self.__dict__)
 
-class ContextualizedEmbedding(nn.Module):
+class ContextualEmbedding(nn.Module):
     def __init__(self, model, freeze=True):
+        super(ContextualEmbedding, self).__init__()
         self.model = model.eval()
-        self.dim = self.model.config.hidden_size
+        self.embedding_dim = self.model.config.hidden_size
 
-        self.freeze = freeze
+        self.frozen = freeze
         self.model.requires_grad_(not freeze)
 
     def freeze(self):
-        self.freeze = True
+        self.frozen = True
         self.model.requires_grad_(False)
     
-    def forward(self, input):
-        outputs = self.model(**input)
-        return outputs.last_hidden_state
+    def forward(self, input, mask):
+        input_shape = input.shape
+        input = input.view(-1, input_shape[-1])
+        mask = input.view(-1, input_shape[-1])
+        outputs = self.model(input_ids=input, attention_mask=mask)
+        embeddings = outputs.last_hidden_state
+        embeddings = embeddings.view(input_shape + (-1,))
+        return embeddings
 
     def __repr__(self):
         pass

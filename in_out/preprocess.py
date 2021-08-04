@@ -173,28 +173,40 @@ def validate_gold_top_down(instances):
 
 
 def batch_data_variable(data, indices, vocab, config, is_training=True):
-    tokenize_words = not config.static_word_embedding
+    tokenize_words = config.contextual_word_embedding
     batch_size  = len(indices)
     indices = indices.tolist()
     batch = data[indices]
-    max_edu_len = -1
+    max_edu_word_len = -1
+    max_edu_token_len = -1
     max_edu_num = -1
     for data in batch:
         edu_num = len(data.edus)
         if edu_num > max_edu_num: max_edu_num = edu_num
         for edu in data.edus:
-            edu_len = len(edu.words)
-            if edu_len > max_edu_len: max_edu_len = edu_len
-    if max_edu_len > config.max_sent_size: max_edu_len = config.max_sent_size
-    
-    edu_words = Variable(torch.LongTensor(batch_size, max_edu_num, max_edu_len).zero_(), requires_grad=False)
-    edu_types = Variable(torch.LongTensor(batch_size, max_edu_num).zero_(), requires_grad=False)
-    edu_syntax = np.zeros([batch_size, max_edu_num, max_edu_len, config.syntax_dim], dtype=np.float32)
-     
-    word_mask = Variable(torch.Tensor(batch_size, max_edu_num, max_edu_len).zero_(), requires_grad=False)
-    edu_tags = Variable(torch.LongTensor(batch_size, max_edu_num, max_edu_len).zero_(), requires_grad=False)
-    edu_mask = Variable(torch.Tensor(batch_size, max_edu_num).zero_(), requires_grad=False)
+            edu_word_len = len(edu.words)
+            edu_token_len = len(edu.tokens)
+            if edu_word_len > max_edu_word_len: max_edu_word_len = edu_word_len
+            if edu_token_len > max_edu_token_len: max_edu_token_len = edu_token_len
+    if max_edu_word_len > config.max_sent_size: max_edu_word_len = config.max_sent_size
+    if max_edu_token_len > config.max_sent_size: max_edu_token_len = config.max_sent_size
+
     word_denominator = Variable(torch.ones(batch_size, max_edu_num).type(torch.FloatTensor) * -1, requires_grad=False)
+    word_mask = Variable(torch.Tensor(batch_size, max_edu_num, max_edu_word_len).zero_(), requires_grad=False)
+    if tokenize_words:
+        edu_tokens = Variable(torch.LongTensor(batch_size, max_edu_num, max_edu_token_len).zero_(), requires_grad=False)
+        token_denominator = Variable(torch.ones(batch_size, max_edu_num).type(torch.FloatTensor) * -1, requires_grad=False)
+        token_mask = Variable(torch.Tensor(batch_size, max_edu_num, max_edu_token_len).zero_(), requires_grad=False)
+        edu_tags = torch.Tensor()
+    else:
+        edu_tokens = Variable(torch.LongTensor(batch_size, max_edu_num, max_edu_word_len).zero_(), requires_grad=False)
+        token_denominator = word_denominator
+        token_mask = word_mask
+        edu_tags = Variable(torch.LongTensor(batch_size, max_edu_num, max_edu_word_len).zero_(), requires_grad=False)
+
+    edu_syntax = np.zeros([batch_size, max_edu_num, max_edu_word_len, config.syntax_dim], dtype=np.float32)
+    edu_types = Variable(torch.LongTensor(batch_size, max_edu_num).zero_(), requires_grad=False)
+    edu_mask = Variable(torch.Tensor(batch_size, max_edu_num).zero_(), requires_grad=False)
     len_edus = np.zeros([batch_size], dtype=np.int64)
     gold_segmentation = Variable(torch.Tensor(batch_size, max_edu_num-1, max_edu_num).zero_(), requires_grad=False)
     gold_nuclear = Variable(torch.ones(batch_size, max_edu_num-1).type(torch.LongTensor) * vocab.nuclear_alpha.size(), requires_grad=False)
@@ -211,15 +223,23 @@ def batch_data_variable(data, indices, vocab, config, is_training=True):
             edu = batch[idx].edus[idy]
             edu_mask[idx, idy] = 1
             edu_types[idx, idy] = vocab.etype_alpha.word2id(edu.etype)
-            edu_len = min(len(edu.words), max_edu_len)
-            word_denominator[idx, idy] = edu_len
-            for idz in range(edu_len):
-                word = edu.words[idz]
-                tag = edu.tags[idz]
-                edu_words[idx, idy, idz] = vocab.word_alpha.word2id(word)
-                edu_tags[idx, idy, idz] = vocab.tag_alpha.word2id(tag)
-                edu_syntax[idx, idy, idz] = edu.syntax_features[idz]
-                word_mask[idx, idy, idz] = 1
+            edu_word_len = min(len(edu.words), max_edu_word_len)
+            word_denominator[idx, idy] = edu_word_len
+            word_mask[idx, idy, :edu_word_len] = 1
+            if tokenize_words:
+                edu_token_len = min(len(edu.tokens), max_edu_token_len)
+                token_denominator[idx, idy] = edu_token_len
+                for idz in range(edu_token_len):
+                    token = edu.tokens[idz]
+                    edu_tokens[idx, idy, idz] = token
+                    token_mask[idx, idy, idz] = 1
+            else:
+                for idz in range(edu_word_len):
+                    word = edu.words[idz]
+                    tag = edu.tags[idz]
+                    edu_tokens[idx, idy, idz] = vocab.word_alpha.word2id(word)
+                    edu_tags[idx, idy, idz] = vocab.tag_alpha.word2id(tag)
+                    edu_syntax[idx, idy, idz] = edu.syntax_features[idz]
     
         if is_training:
             for idy in range(len(batch[idx].gold_top_down.edu_span)):
@@ -238,11 +258,13 @@ def batch_data_variable(data, indices, vocab, config, is_training=True):
     depth = copy.deepcopy(gold_depth)
     edu_syntax = Variable(torch.from_numpy(edu_syntax), volatile=False, requires_grad=False)
     if config.use_gpu:
-        edu_words = edu_words.cuda()
+        edu_tokens = edu_tokens.cuda()
         edu_tags = edu_tags.cuda()
         edu_types = edu_types.cuda()
         edu_mask = edu_mask.cuda()
+        token_mask = token_mask.cuda()
         word_mask = word_mask.cuda()
+        token_denominator = token_denominator.cuda()
         word_denominator = word_denominator.cuda()
         edu_syntax = edu_syntax.cuda()
         gold_nuclear = gold_nuclear.cuda()
@@ -250,7 +272,7 @@ def batch_data_variable(data, indices, vocab, config, is_training=True):
         gold_nuclear_relation = gold_nuclear_relation.cuda()
         gold_segmentation = gold_segmentation.cuda()
 
-    return edu_words, edu_tags, edu_types, edu_mask, word_mask, len_edus, \
+    return edu_tokens, edu_tags, edu_types, edu_mask, token_mask, word_mask, len_edus, token_denominator, \
             word_denominator, edu_syntax, gold_nuclear, gold_relation, gold_nuclear_relation, gold_segmentation, \
             span, len_golds, depth
 
