@@ -10,7 +10,6 @@ import random
 import torch
 from torch.optim import Adam, SGD, Adamax
 from torch.nn.utils import clip_grad_norm_
-from transformers import BertTokenizer, BertModel
 
 from in_out.reader import Reader
 from in_out.util import load_embedding_dict, get_logger
@@ -29,6 +28,7 @@ UNK_ID=0
 main_path=''
 
 
+from transformers import BertTokenizer, BertModel, GPT2Tokenizer, GPT2Model
 def load_word_embedding_and_tokenizer(word_alpha, config):
     if config.static_word_embedding:
         pretrained_embed, word_dim = load_embedding_dict(config.word_embedding, config.word_embedding_file)
@@ -40,6 +40,13 @@ def load_word_embedding_and_tokenizer(word_alpha, config):
         bert_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
         embedding = ContextualEmbedding(bert_model)
         tokenizer = Tokenizer(bert_tokenizer)
+        assert(embedding.embedding_dim == config.word_dim)
+    elif config.word_embedding == "gpt2":
+        gpt_model = GPT2Model.from_pretrained('gpt2')
+        gpt_tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+        gpt_tokenizer.pad_token = gpt_tokenizer.eos_token
+        embedding = ContextualEmbedding(gpt_model)
+        tokenizer = Tokenizer(gpt_tokenizer)
         assert(embedding.embedding_dim == config.word_dim)
     else:
         raise NotImplementedError()
