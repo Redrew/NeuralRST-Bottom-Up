@@ -1,3 +1,4 @@
+import math
 import numpy as np
 import torch
 import torch.nn as nn
@@ -18,6 +19,23 @@ def assign_tensor(tensor, val):
         assign_tensor(tensor.data, val)
         return tensor
     return tensor.copy_(val)
+
+
+def chunkify(edu_lengths, max_chunk_length):
+    """
+    split span into chunks along edu boundaries
+    """
+    chunk_boundaries = []
+    start, end = 0, 0
+    for edu_length in edu_lengths:
+        if end - start + edu_length > max_chunk_length:
+            chunk_boundaries.append((start, end))
+            start = end
+        end += int(edu_length)
+    if end - start > 0:
+        chunk_boundaries.append((start, end))
+
+    return chunk_boundaries
 
 
 class Embedding(nn.Module):
@@ -113,10 +131,19 @@ class Embedding(nn.Module):
         return s.format(name=self.__class__.__name__, **self.__dict__)
 
 class ContextualEmbedding(nn.Module):
-    def __init__(self, model, freeze=True):
+    def __init__(self, model, input_limit=np.inf, freeze=True, prefix=None, postfix=None):
         super(ContextualEmbedding, self).__init__()
         self.model = model.eval()
         self.embedding_dim = self.model.config.hidden_size
+        if prefix is not None:
+            self.prefix = torch.LongTensor([prefix])
+        else:
+            self.prefix = torch.LongTensor()
+        if postfix is not None:
+            self.postfix = torch.LongTensor([postfix])
+        else:
+            self.postfix = torch.LongTensor()
+        self.input_limit = input_limit - self.prefix.shape[0] - self.postfix.shape[0]
 
         self.frozen = freeze
         self.model.requires_grad_(not freeze)
@@ -126,12 +153,30 @@ class ContextualEmbedding(nn.Module):
         self.model.requires_grad_(False)
     
     def forward(self, input, mask):
-        input_shape = input.shape
-        input = input.view(-1, input_shape[-1])
-        mask = input.view(-1, input_shape[-1])
-        outputs = self.model(input_ids=input, attention_mask=mask)
-        embeddings = outputs.last_hidden_state
-        embeddings = embeddings.view(input_shape + (-1,))
+        embeddings = torch.zeros(*input.shape, self.embedding_dim).type(torch.FloatTensor)
+        embeddings = embeddings.to(input.device)
+        num_instances = input.shape[0]
+        for i in range(num_instances):
+            self.embed_instance(input[i], mask[i], embeddings[i])
+        return embeddings
+    
+    def embed_instance(self, input, mask, output):
+        mask = mask.bool()
+        tokens = input[mask]
+        embedded_chunks = []
+        for start, end in chunkify(mask.sum(-1), self.input_limit):
+            embedded_chunks.append(self.embed_tokens(tokens[start:end]))
+        embeddings = torch.cat(embedded_chunks)
+        output[mask] = embeddings
+
+    def embed_tokens(self, tokens):
+        tokens = torch.cat([self.prefix, tokens, self.postfix])
+        tokens = torch.unsqueeze(tokens, 0)
+        model_out = self.model(input_ids=tokens)
+        embeddings = model_out.last_hidden_state[0]
+        prefix_end = self.prefix.shape[0]
+        postfix_start = embeddings.shape[0] - self.postfix.shape[0]
+        embeddings = embeddings[prefix_end:postfix_start]
         return embeddings
 
     def __repr__(self):

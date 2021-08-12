@@ -38,14 +38,16 @@ def load_word_embedding_and_tokenizer(word_alpha, config):
     elif config.word_embedding == "bert":
         bert_model = BertModel.from_pretrained('bert-base-uncased')
         bert_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-        embedding = ContextualEmbedding(bert_model)
-        tokenizer = Tokenizer(bert_tokenizer)
+        cls = bert_tokenizer.cls_token_id
+        sep = bert_tokenizer.sep_token_id
+        embedding = ContextualEmbedding(bert_model, input_limit=512, prefix=cls, postfix=sep)
+        tokenizer = Tokenizer(bert_tokenizer, remove_prefix=True, remove_postfix=True)
         assert(embedding.embedding_dim == config.word_dim)
     elif config.word_embedding == "gpt2":
         gpt_model = GPT2Model.from_pretrained('gpt2')
         gpt_tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
         gpt_tokenizer.pad_token = gpt_tokenizer.eos_token
-        embedding = ContextualEmbedding(gpt_model)
+        embedding = ContextualEmbedding(gpt_model, input_limit=1024)
         tokenizer = Tokenizer(gpt_tokenizer)
         assert(embedding.embedding_dim == config.word_dim)
     else:
