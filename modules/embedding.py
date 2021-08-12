@@ -135,14 +135,10 @@ class ContextualEmbedding(nn.Module):
         super(ContextualEmbedding, self).__init__()
         self.model = model.eval()
         self.embedding_dim = self.model.config.hidden_size
-        if prefix is not None:
-            self.prefix = torch.LongTensor([prefix])
-        else:
-            self.prefix = torch.LongTensor()
-        if postfix is not None:
-            self.postfix = torch.LongTensor([postfix])
-        else:
-            self.postfix = torch.LongTensor()
+        prefix = [] if prefix is None else [prefix]
+        postfix = [] if postfix is None else [postfix]
+        self.prefix = nn.Parameter(torch.LongTensor(prefix), requires_grad=False)
+        self.postfix = nn.Parameter(torch.LongTensor(postfix), requires_grad=False)
         self.input_limit = input_limit - self.prefix.shape[0] - self.postfix.shape[0]
 
         self.frozen = freeze
