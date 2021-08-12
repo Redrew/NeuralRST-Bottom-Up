@@ -48,7 +48,7 @@ def load_word_embedding_and_tokenizer(word_alpha, config):
         gpt_tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
         gpt_tokenizer.pad_token = gpt_tokenizer.eos_token
         embedding = ContextualEmbedding(gpt_model, input_limit=1024)
-        tokenizer = Tokenizer(gpt_tokenizer)
+        tokenizer = Tokenizer(gpt_tokenizer, space_prefix=True)
         assert(embedding.embedding_dim == config.word_dim)
     else:
         raise NotImplementedError()

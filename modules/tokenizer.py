@@ -1,16 +1,19 @@
 class Tokenizer:
-    def __init__(self, tokenizer, remove_prefix=False, remove_postfix=False):
+    def __init__(self, tokenizer, remove_prefix=False, remove_postfix=False, space_prefix=False):
         self.tokenizer = tokenizer
         self.remove_prefix = remove_prefix
         self.remove_postfix = remove_postfix
+        self.space_prefix = space_prefix
     
     def __call__(self, sents):
         return self.tokenizer(sents, padding=True)["input_ids"]
     
     def tokenize(self, instances):
         for instance in instances:
-            for edu in instance.edus:
+            for edu_i, edu in enumerate(instance.edus):
                 phrase = " ".join(edu.words)
+                if self.space_prefix and edu_i != 0:
+                    phrase = " " + phrase
                 tokens = self(phrase)
                 if self.remove_prefix:
                     tokens = tokens[1:]
