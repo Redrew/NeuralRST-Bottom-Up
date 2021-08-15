@@ -21,6 +21,7 @@ from models.metric import Metric
 from models.vocab import Vocab
 from models.config import Config
 from models.architecture import MainArchitecture
+from models.transformers import get_model_tokenizer
 from modules.embedding import ContextualEmbedding
 from modules.tokenizer import Tokenizer
 
@@ -36,19 +37,23 @@ def load_word_embedding_and_tokenizer(word_alpha, config):
         embedding = construct_embedding(word_alpha, config.word_dim, config.freeze, pretrained_embed)
         tokenizer = None
     elif config.word_embedding == "bert":
-        bert_model = BertModel.from_pretrained('bert-base-uncased')
-        bert_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+        bert_model, bert_tokenizer = get_model_tokenizer("bert")
         cls = bert_tokenizer.cls_token_id
         sep = bert_tokenizer.sep_token_id
         embedding = ContextualEmbedding(bert_model, input_limit=512, prefix=cls, postfix=sep)
         tokenizer = Tokenizer(bert_tokenizer, remove_prefix=True, remove_postfix=True)
         assert(embedding.embedding_dim == config.word_dim)
     elif config.word_embedding == "gpt2":
-        gpt_model = GPT2Model.from_pretrained('gpt2')
-        gpt_tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+        gpt_model, gpt_tokenizer = get_model_tokenizer("gpt2")
         gpt_tokenizer.pad_token = gpt_tokenizer.eos_token
         embedding = ContextualEmbedding(gpt_model, input_limit=1024)
-        tokenizer = Tokenizer(gpt_tokenizer, space_prefix=True)
+        tokenizer = Tokenizer(gpt_tokenizer, add_prefix_space=True)
+        assert(embedding.embedding_dim == config.word_dim)
+    elif config.word_embedding == "bart-6":
+        from transformers import BartTokenizer, BartModel
+        bart_model, bart_tokenizer = get_model_tokenizer("bart", 6)
+        embedding = ContextualEmbedding(bart_model, input_limit=1024)
+        tokenizer = Tokenizer(bart_tokenizer, add_prefix_space=True)
         assert(embedding.embedding_dim == config.word_dim)
     else:
         raise NotImplementedError()
