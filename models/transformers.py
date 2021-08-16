@@ -70,6 +70,7 @@ def _get_model(model_type, num_layers, all_layers=None):
                     model.decoder.layers =  model.decoder.layers[:num_layers-6]
                 else:
                     model.encoder.layers = model.encoder.layers[:num_layers]
+                    model = model.encoder
             else:  # bert, roberta
                 assert (
                     0 <= num_layers <= len(model.encoder.layer)
