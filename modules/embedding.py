@@ -37,6 +37,15 @@ def chunkify(edu_lengths, max_chunk_length):
 
     return chunk_boundaries
 
+def chunk_end(edu_lengths, max_chunk_length):
+    end = int(sum(edu_lengths))
+    start = end
+    for edu_length in reversed(edu_lengths):
+        if end - start + edu_length > max_chunk_length:
+            break
+        start -= edu_length
+    return (start, end)
+
 
 class Embedding(nn.Module):
     r"""A simple lookup table that stores embeddings of a fixed dictionary and size.
@@ -131,7 +140,7 @@ class Embedding(nn.Module):
         return s.format(name=self.__class__.__name__, **self.__dict__)
 
 class ContextualEmbedding(nn.Module):
-    def __init__(self, model, input_limit=np.inf, freeze=True, prefix=None, postfix=None):
+    def __init__(self, model, input_limit=np.inf, min_chunk_size=None, freeze=True, prefix=None, postfix=None):
         super(ContextualEmbedding, self).__init__()
         self.model = model.eval()
         self.embedding_dim = self.model.config.hidden_size
@@ -140,6 +149,7 @@ class ContextualEmbedding(nn.Module):
         self.prefix = nn.Parameter(torch.LongTensor(prefix), requires_grad=False)
         self.postfix = nn.Parameter(torch.LongTensor(postfix), requires_grad=False)
         self.input_limit = input_limit - self.prefix.shape[0] - self.postfix.shape[0]
+        self.min_chunk_size = min_chunk_size if min_chunk_size else 0.5 * self.input_limit
 
         self.frozen = freeze
         self.model.requires_grad_(not freeze)
@@ -160,8 +170,16 @@ class ContextualEmbedding(nn.Module):
         mask = mask.bool()
         tokens = input[mask]
         embedded_chunks = []
-        for start, end in chunkify(mask.sum(-1), self.input_limit):
-            embedded_chunks.append(self.embed_tokens(tokens[start:end]))
+        chunk_boundaries = chunkify(mask.sum(-1), self.input_limit)
+        for chunk_i, (start, end) in enumerate(chunk_boundaries):
+            last_chunk = chunk_i == len(chunk_boundaries) - 1
+            if last_chunk and end - start < self.min_chunk_size: # the last chunk should be larger than min chunk size
+                context_start, context_end = chunk_end(mask.sum(-1), self.input_limit)
+                assert (end == context_end)
+                embedded_chunk = self.embed_tokens(tokens[context_start:context_end])[start - context_start:]
+            else:
+                embedded_chunk = self.embed_tokens(tokens[start:end])
+            embedded_chunks.append(embedded_chunk)
         embeddings = torch.cat(embedded_chunks)
         output[mask] = embeddings
 
