@@ -12,6 +12,7 @@ class Instance(object):
         self.result = result
         self.tree = self.obtain_tree(result)
         self.gold_top_down = Gold(self.tree)
+        self.gold_bottom_up = GoldBottomUp.from_tree(self.tree)
 
     def evaluate(self, other_result, span, nuclear, relation, full):
         main_subtrees = self.result.subtrees
@@ -104,6 +105,8 @@ class Instance(object):
                 tree.right = p_subtree[edu_span[1]]
             else:
                 tree.right = Tree((edu_span[1], edu_span[1]), "", "")
+            tree.left.parent = tree
+            tree.right.parent = tree
 
             p_subtree[edu_span[0]] = tree
             p_subtree[edu_span[1]] = tree
@@ -186,6 +189,77 @@ class Gold(object):
         self.nuclear = nuclear
         self.relation = relation
 
+
+def subtree_cmp_key(tree):
+    return tree.edu_span
+
+
+# GoldBottomUp represents Bottom-Up Parser attributes
+class GoldBottomUp:
+    def __init__(self, tree, merges, terminals):
+        self.tree = tree
+        self.merges = merges
+        self.terminals = terminals
+        self.span_len = tree.edu_span[1] + 1 if tree is not None else 0
+        self.merge_spans = [merge.edu_span for merge in self.merges]
+        self.merge_mask = [0] * len(self.terminals)
+        for subtree in self.merges:
+            idx = self.terminals.index(subtree.left.edu_span)
+            self.merge_mask[idx] = 1
+
+    @staticmethod
+    def from_tree(tree):
+        merge_set = set()
+        terminals = []
+        queue = []
+        if tree is not None:
+            queue.append(tree)
+        while queue:
+            t = queue.pop()
+            if t.left is not None or t.right is not None:
+                merge_set.add(t)
+                if t.parent and t.parent in merge_set:
+                    merge_set.remove(t.parent)
+            else:
+                terminals.append(t.edu_span)
+            if t.left is not None:
+                queue.append(t.left)
+            if t.right is not None:
+                queue.append(t.right)
+        merges = sorted(merge_set, key=subtree_cmp_key)
+        terminals.sort()
+        return GoldBottomUp(tree, merges, terminals)
+
+    def merge(self, subtree):
+        merges = self.merges.copy()
+        terminals = self.terminals.copy()
+        if subtree.left:
+            terminals.remove(subtree.left.edu_span)
+        if subtree.right:
+            terminals.remove(subtree.right.edu_span)
+        terminals.append(subtree.edu_span)
+        terminals.sort()
+        merges.remove(subtree)
+        mergeable = [False] * self.span_len
+        for merge in merges:
+            for idx in merge.edu_span:
+                mergeable[idx] = True
+        def in_merges(tree):
+            for idx in tree.edu_span:
+                if mergeable[idx]:
+                    return True
+            return False
+        if subtree.parent:
+            parent = subtree.parent
+            if parent.left == subtree:
+                sibling = parent.right
+            else:
+                sibling = parent.left
+            if not in_merges(sibling):
+                merges.append(parent)
+                merges.sort(key=subtree_cmp_key)
+        return GoldBottomUp(self.tree, merges, terminals)
+ 
 
 # A single EDU representation
 class EDU(object):

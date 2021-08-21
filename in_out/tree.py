@@ -5,6 +5,7 @@ class Tree(object):
         self.relation = relation
         self.left = None
         self.right = None
+        self.parent = None
 
     def str(self):
         return self.nuclear + ' ' + self.relation
