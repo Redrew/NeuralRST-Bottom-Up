@@ -10,6 +10,9 @@ class Tree(object):
     def str(self):
         return self.nuclear + ' ' + self.relation
 
+    def __str__(self):
+        return str(self) + ' ' + str(self.edu_span) +' at ' + id(self)
+
     def get_id(self, vocab):
         tmp = self.nuclear.split(' ')
         action_str = "REDUCE_" + tmp[0][0] + tmp[1][0] + '_' + self.relation

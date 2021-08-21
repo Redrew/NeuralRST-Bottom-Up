@@ -242,10 +242,12 @@ class GoldBottomUp:
         merges.remove(subtree)
         mergeable = [False] * self.span_len
         for merge in merges:
-            for idx in merge.edu_span:
+            start, end = merge.edu_span
+            for idx in range(start, end+1):
                 mergeable[idx] = True
         def in_merges(tree):
-            for idx in tree.edu_span:
+            start, end = tree.edu_span
+            for idx in range(start, end+1):
                 if mergeable[idx]:
                     return True
             return False

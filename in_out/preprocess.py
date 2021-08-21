@@ -214,6 +214,7 @@ def batch_data_variable(data, indices, vocab, config, is_training=True):
     gold_nuclear_relation = Variable(torch.ones(batch_size, max_edu_num-1).type(torch.LongTensor) * vocab.nuclear_relation_alpha.size(), requires_grad=False)
     gold_span = []
     gold_depth = []
+    gold_bottom_up = []
 
     len_golds = np.zeros([batch_size], dtype=np.int64)
 
@@ -251,6 +252,7 @@ def batch_data_variable(data, indices, vocab, config, is_training=True):
                 gold_segmentation[idx, idy, index_gold] = 1
             gold_span.append(batch[idx].gold_top_down.edu_span)
             gold_depth.append(batch[idx].gold_top_down.depth)
+            gold_bottom_up.append(batch[idx].gold_bottom_up)
             
             len_golds[idx] = len(batch[idx].gold_top_down.edu_span)
 
@@ -274,6 +276,6 @@ def batch_data_variable(data, indices, vocab, config, is_training=True):
 
     return edu_tokens, edu_tags, edu_types, edu_mask, token_mask, word_mask, len_edus, token_denominator, \
             word_denominator, edu_syntax, gold_nuclear, gold_relation, gold_nuclear_relation, gold_segmentation, \
-            span, len_golds, depth
+            span, len_golds, depth, gold_bottom_up
 
  

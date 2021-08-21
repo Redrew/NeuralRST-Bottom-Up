@@ -7,9 +7,21 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
-from in_out.instance import CResult, Gold
+from in_out.instance import CResult, Gold, GoldBottomUp
 from models.metric import Metric
 from modules.layer import *
+from typing import List
+
+def left_first_construction(gold: GoldBottomUp):
+    merge_masks = []
+    terminals = []
+    while gold.merges:
+        merge_mask = [0] * len(gold.merge_mask)
+        merge_mask[gold.merge_mask.index(1)] = 1
+        merge_masks.append(merge_mask)
+        terminals.append(gold.terminals)
+        gold = gold.merge(gold.merges[0])
+    return merge_masks, terminals
 
 class MainArchitecture(nn.Module):
     def __init__(self, vocab, config, word_embedd, tag_embedd, etype_embedd):
@@ -212,12 +224,30 @@ class MainArchitecture(nn.Module):
             loss += self.config.loss_nuc_rel * nuc_rel_loss
         return loss
     
-    # Helper function
-    def not_finished(self, span, batch_size):
-        for idx in range(batch_size):
-            if len(span[idx])>0:
-                return True
-        return False
+    def compute_loss_bu(self, merge_outputs, stack_merges, merge_masks, nuclear_relation, gold_nuclear_relation, len_golds):
+        seg_loss = []
+        merge_masks = merge_masks.bool()
+        batch_size = nuclear_relation.shape[0]
+        stack_num = merge_masks.shape[0]
+        for idx in range(stack_num):
+            stack_mask = merge_masks[idx]
+            if not torch.any(stack_mask):
+                continue
+            output, target = merge_outputs[idx, stack_mask], stack_merges[idx, stack_mask]
+            cur_loss = F.binary_cross_entropy(output, target, reduction='sum')
+            seg_loss.append(cur_loss)
+        seg_loss = sum(seg_loss) / len(seg_loss)
+        loss = seg_loss
+        _, gold_merge_index = torch.max(stack_merges, 1)
+        gold_merge_index = gold_merge_index.view(batch_size, -1)
+        self.update_eval_metric(gold_merge_index, nuclear_relation, gold_nuclear_relation, len_golds)
+        return loss
+        # Helper function
+        def not_finished(self, span, batch_size):
+            for idx in range(batch_size):
+                if len(span[idx])>0:
+                    return True
+            return False
 
     # Helper function
     def get_initial_span(self, span, batch_size):
@@ -289,6 +319,28 @@ class MainArchitecture(nn.Module):
         stack_state = torch.index_select(edu_rep, 0, stack_index)
         stack_state = stack_state.view(batch_size, edu_num, hidden)
         return stack_state, segment_mask
+
+    def prepare_segmentation_for_training_bu(self, encoder_output, gold_bottom_up):
+        batch_size, edu_num, hidden = encoder_output.shape
+        stack_state = Variable(torch.zeros(batch_size, edu_num-1, edu_num, hidden)).type(torch.FloatTensor)
+        stack_mask = Variable(torch.zeros(batch_size, edu_num-1, edu_num)).type(torch.LongTensor)
+        stack_merge = Variable(torch.zeros(batch_size, edu_num-1, edu_num)).type(torch.FloatTensor)
+        for idx in range(batch_size):
+            merges, states = left_first_construction(gold_bottom_up[idx])
+            for idy in range(len(merges)):
+                merge, terminals = merges[idy], states[idy]
+                for idz, terminal in enumerate(terminals):
+                    start, end = terminal
+                    stack_state[idx, idy, idz] = encoder_output[idx, start:end+1].mean(0)
+                    stack_mask[idx, idy, idz] = 1
+                for idz in range(len(merge)):
+                    stack_merge[idx, idy, idz] = merge[idz]
+        stack_num = batch_size * (edu_num - 1)
+        if self.config.use_gpu:
+            stack_state = stack_state.cuda()
+            stack_mask = stack_mask.cuda()
+            stack_merge = stack_merge.cuda()
+        return stack_state.view(stack_num, edu_num, -1), stack_mask.view(stack_num, -1), stack_merge.view(stack_num, -1)
 
     def prepare_prediction_for_testing(self, encoder_output, cur_span_pairs):
         batch_size, edu_num, hidden = encoder_output.shape
@@ -484,6 +536,21 @@ class MainArchitecture(nn.Module):
         return self.compute_loss(segment_outputs, gold_segmentation, segment_masks, \
                                      nuclear_relation_outputs, gold_nuclear_relation, \
                                      len_golds, depth)
+
+    def decode_training_bu(self, encoder_output, gold_nuclear_relation, gold_bottom_up: List[GoldBottomUp], len_golds):
+        batch_size, edu_size, hidden_size = encoder_output.shape
+        for idx in range(batch_size):
+            self.index_output[idx]=[]
+        all_hidden_states1, merge_masks, stack_merges = self.prepare_segmentation_for_training_bu(encoder_output, gold_bottom_up)
+        merge_outputs, rnn_outputs = self.run_rnn_segmentation(all_hidden_states1, merge_masks)
+        self.set_segment_prediction_for_training(merge_outputs.view(batch_size, edu_size-1, -1), 
+                merge_masks.view(batch_size, edu_size-1, -1))
+        nuclear_relation = torch.zeros((batch_size, edu_size, 1))
+        if self.config.use_gpu:
+            nuclear_relation = nuclear_relation.cuda()
+        return self.compute_loss_bu(merge_outputs, stack_merges, merge_masks, nuclear_relation, gold_nuclear_relation, len_golds)
+
+        
     # End of training with static oracle ---------------------------------------------------
  
 
@@ -612,13 +679,17 @@ class MainArchitecture(nn.Module):
         # gold_nuclear, gold_relation, gold_segmentation, span, len_golds, depth
         self.epoch = epoch
         words, tags, etypes, edu_mask, token_mask, word_mask, len_edus, token_denominator, word_denominator, syntax, \
-            gold_nuclear, gold_relation, gold_nuclear_relation, gold_segmentation, span, len_golds, depth = subset_data
+            gold_nuclear, gold_relation, gold_nuclear_relation, gold_segmentation, span, len_golds, depth, gold_bottom_up = subset_data
         encoder_output = self.forward_all(words, tags, etypes, edu_mask, token_mask, word_mask, token_denominator, word_denominator, syntax)
         if self.training:
+            # if self.config.flag_oracle:
+            #     cost = self.decode_training_dynamic_oracle(encoder_output, gold_nuclear_relation, gold_segmentation, span, len_golds, depth)
+            # else:
+            #     cost = self.decode_training(encoder_output, gold_nuclear_relation, gold_segmentation, span, len_golds, depth)
             if self.config.flag_oracle:
-                cost = self.decode_training_dynamic_oracle(encoder_output, gold_nuclear_relation, gold_segmentation, span, len_golds, depth)
+                raise NotImplementedError("Dynamic oracle not implemented for bottom up parser")
             else:
-                cost = self.decode_training(encoder_output, gold_nuclear_relation, gold_segmentation, span, len_golds, depth)
+                cost = self.decode_training_bu(encoder_output, gold_nuclear_relation, gold_bottom_up, len_golds)
             return cost, cost.item()
         else:
             if self.config.beam_search == 1:
