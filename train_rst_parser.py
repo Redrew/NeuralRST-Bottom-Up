@@ -203,8 +203,6 @@ def main():
 
     logger.info("Load word embedding, will take 2 minutes")
     word_embedd, word_tokenizer = load_word_embedding_and_tokenizer(word_alpha, config)
-    if word_tokenizer is not None:
-        word_tokenizer.tokenize(train_instances)
 
     logger.info("Finish reading train data by:" + str(round(time.time() - start_a, 2)) + 'sec')
 
@@ -217,6 +215,11 @@ def main():
     reader = Reader(config.test_path, config.test_syn_feat_path)
     test_instances  = reader.read_data()
     logger.info('Finish reading test instances')
+
+    if word_tokenizer is not None:
+        word_tokenizer.tokenize(train_instances)
+        word_tokenizer.tokenize(dev_instances)
+        word_tokenizer.tokenize(test_instances)
 
     torch.set_num_threads(4)
     network = MainArchitecture(vocab, config, word_embedd, tag_embedd, etype_embedd) 
