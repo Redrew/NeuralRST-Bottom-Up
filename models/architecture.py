@@ -236,18 +236,19 @@ class MainArchitecture(nn.Module):
             output, target = merge_outputs[idx, stack_mask], stack_merges[idx, stack_mask]
             cur_loss = F.binary_cross_entropy(output, target, reduction='sum')
             seg_loss.append(cur_loss)
-        seg_loss = sum(seg_loss) / len(seg_loss)
-        loss = seg_loss
+        seg_loss = sum(seg_loss) / merge_masks.sum()
+        loss = self.config.loss_seg * seg_loss
         _, gold_merge_index = torch.max(stack_merges, 1)
         gold_merge_index = gold_merge_index.view(batch_size, -1)
         self.update_eval_metric(gold_merge_index, nuclear_relation, gold_nuclear_relation, len_golds)
         return loss
-        # Helper function
-        def not_finished(self, span, batch_size):
-            for idx in range(batch_size):
-                if len(span[idx])>0:
-                    return True
-            return False
+
+    # Helper function
+    def not_finished(self, span, batch_size):
+        for idx in range(batch_size):
+            if len(span[idx])>0:
+                return True
+        return False
 
     # Helper function
     def get_initial_span(self, span, batch_size):
