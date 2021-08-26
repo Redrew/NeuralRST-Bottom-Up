@@ -354,10 +354,11 @@ class MyLSTM(nn.Module):
         max_time = input.size(0)
         output = []
         hx = initial
+        masks = masks.bool()
         for time in range(max_time):
             h_next, c_next = cell(input=input[time], hx=hx)
-            h_next = h_next*masks[time] + initial[0]*(1-masks[time])
-            c_next = c_next*masks[time] + initial[1]*(1-masks[time])
+            h_next = h_next*masks[time] + initial[0]*(~masks[time])
+            c_next = c_next*masks[time] + initial[1]*(~masks[time])
             output.append(h_next)
             if drop_masks is not None: h_next = h_next * drop_masks
             hx = (h_next, c_next)
@@ -369,10 +370,13 @@ class MyLSTM(nn.Module):
         max_time = input.size(0)
         output = []
         hx = initial
+        masks = masks.bool()
         for time in reversed(range(max_time)):
             h_next, c_next = cell(input=input[time], hx=hx)
-            h_next = h_next*masks[time] + initial[0]*(1-masks[time])
-            c_next = c_next*masks[time] + initial[1]*(1-masks[time])
+            h_next = h_next*masks[time] + initial[0]*(~masks[time])
+            c_next = c_next*masks[time] + initial[1]*(~masks[time])
+            if torch.any(torch.isnan(h_next)):
+                print("Bad")
             output.append(h_next)
             if drop_masks is not None: h_next = h_next * drop_masks
             hx = (h_next, c_next)
