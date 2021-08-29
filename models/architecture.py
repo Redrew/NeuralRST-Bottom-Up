@@ -14,14 +14,14 @@ from typing import List
 
 def left_first_construction(gold: GoldBottomUp):
     merge_masks = []
-    terminals = []
+    state_spans = []
     while gold.merges:
         merge_mask = [0] * len(gold.merge_mask)
         merge_mask[gold.merge_mask.index(1)] = 1
         merge_masks.append(merge_mask)
-        terminals.append(gold.terminals)
+        state_spans.append(gold.state_spans)
         gold = gold.merge(gold.merges[0])
-    return merge_masks, terminals
+    return merge_masks, state_spans
 
 class MainArchitecture(nn.Module):
     def __init__(self, vocab, config, word_embedd, tag_embedd, etype_embedd):
@@ -190,6 +190,12 @@ class MainArchitecture(nn.Module):
             subtrees.append(g.get_subtree())
         return gs, subtrees
 
+
+    def get_prediction_bu(self, bottom_up_trees):
+        gs = [Gold(bu.get_tree()) for bu in bottom_up_trees]
+        subtrees = [g.get_subtree() for g in gs]
+        return gs, subtrees
+
     def compute_loss(self, segmentation, gold_segmentation, segment_mask, nuclear_relation, gold_nuclear_relation, len_golds, depth):    
         #nuclear_relation loss
         batch_size, nuc_len, nuc_num = nuclear_relation.shape
@@ -321,27 +327,20 @@ class MainArchitecture(nn.Module):
         stack_state = stack_state.view(batch_size, edu_num, hidden)
         return stack_state, segment_mask
 
-    def prepare_segmentation_for_training_bu(self, encoder_output, gold_bottom_up):
+    def prepare_segmentation_for_testing_bu(self, encoder_output, state_batch):
         batch_size, edu_num, hidden = encoder_output.shape
-        stack_state = Variable(torch.zeros(batch_size, edu_num-1, edu_num, hidden)).type(torch.FloatTensor)
-        stack_mask = Variable(torch.zeros(batch_size, edu_num-1, edu_num)).type(torch.LongTensor)
-        stack_merge = Variable(torch.zeros(batch_size, edu_num-1, edu_num)).type(torch.FloatTensor)
+        stack_state = Variable(torch.zeros(batch_size, edu_num, hidden)).type(torch.FloatTensor)
+        stack_mask = Variable(torch.zeros(batch_size, edu_num)).type(torch.LongTensor)
         for idx in range(batch_size):
-            merges, states = left_first_construction(gold_bottom_up[idx])
-            for idy in range(len(merges)):
-                merge, terminals = merges[idy], states[idy]
-                for idz, terminal in enumerate(terminals):
-                    start, end = terminal
-                    stack_state[idx, idy, idz] = encoder_output[idx, start:end+1].mean(0)
-                    stack_mask[idx, idy, idz] = 1
-                for idz in range(len(merge)):
-                    stack_merge[idx, idy, idz] = merge[idz]
-        stack_num = batch_size * (edu_num - 1)
+            state_spans = states[idx]
+            for idz, state_span in enumerate(state_spans):
+                start, end = state_span
+                stack_state[idx, idz] = encoder_output[idx, start:end+1].mean(0)
+                stack_mask[idx, idz] = 1
         if self.config.use_gpu:
             stack_state = stack_state.cuda()
             stack_mask = stack_mask.cuda()
-            stack_merge = stack_merge.cuda()
-        return stack_state.view(stack_num, edu_num, -1), stack_mask.view(stack_num, -1), stack_merge.view(stack_num, -1)
+        return stack_state, stack_mask
 
     def prepare_prediction_for_testing(self, encoder_output, cur_span_pairs):
         batch_size, edu_num, hidden = encoder_output.shape
@@ -389,6 +388,21 @@ class MainArchitecture(nn.Module):
         stack_state = stack_state.view(batch_size, -1)
         return stack_state
 
+    def prepare_segmentation_for_testing_bu(self, encoder_output, state_batch):
+        batch_size, edu_num, hidden = encoder_output.shape
+        stack_state = Variable(torch.zeros(batch_size, edu_num, hidden)).type(torch.FloatTensor)
+        stack_mask = Variable(torch.zeros(batch_size, edu_num)).type(torch.LongTensor)
+        for idx in range(batch_size):
+            state_spans = state_batch[idx]
+            for idz, state_span in enumerate(state_spans):
+                start, end = state_span
+                stack_state[idx, idz] = encoder_output[idx, start:end+1].mean(0)
+                stack_mask[idx, idz] = 1
+        if self.config.use_gpu:
+            stack_state = stack_state.cuda()
+            stack_mask = stack_mask.cuda()
+        return stack_state, stack_mask
+
     def decode_testing(self, encoder_output, span):
         batch_size, edu_size, hidden_size = encoder_output.shape
         span_initial = self.get_initial_span(span, batch_size) #act as queue
@@ -416,6 +430,45 @@ class MainArchitecture(nn.Module):
         all_segment_mask = torch.cat(all_segment_mask, dim=1)
         all_nuclear_relation_output = torch.cat(all_nuclear_relation_output, dim=1)
         return self.get_prediction(all_nuclear_relation_output)
+
+    def decode_testing_bu(self, encoder_output, gold_bottom_up):
+        batch_size, edu_size, hidden_size = encoder_output.shape
+        state, trees = self.get_initial_state(gold_bottom_up)
+        for idx in range(batch_size):
+            self.index_output[idx]=[]
+        
+        all_nuclear_relation_output = []
+        while self.not_finished_bu(trees):
+            hidden_state1, merge_mask = self.prepare_segmentation_for_testing_bu(encoder_output, state)
+            merge_output, rnn_output = self.run_rnn_segmentation(hidden_state1, merge_mask) #output in cuda-2
+            state, trees = self.update_state(merge_output, merge_mask, trees)
+
+        return self.get_prediction_bu(trees)
+
+    def get_initial_state(self, gold_bottom_up):
+        state_spans = [gold.state_spans for gold in gold_bottom_up]
+        trees = [gold.construct_new_copy() for gold in gold_bottom_up]
+        return state_spans, trees
+
+    def not_finished_bu(self, trees):
+        for tree in trees:
+            if not tree.done:
+                return True
+        return False
+
+    def update_state(self, merge_output, merge_mask, trees):
+        new_trees = []
+        batch_size = merge_output.shape[0]
+        for idx in range(batch_size):
+            merge_out, mask, tree = merge_output[idx], merge_mask[idx], trees[idx]
+            if tree.done:
+                new_trees.append(tree)
+            else:
+                num_tokens = mask.sum()
+                merge_idx = torch.argmax(merge_out[:num_tokens-1]).item()
+                new_trees.append(tree.merge(merge_idx, "NUCLEAR SATELLITE", ""))
+        state_spans = [t.state_spans for t in new_trees]
+        return state_spans, new_trees
     # End of testing -----------------------------------------------------------------------
 
 
@@ -500,7 +553,29 @@ class MainArchitecture(nn.Module):
         stack_state = stack_state.view(batch_size * (edu_num-1), edu_num, hidden)
         segment_mask = segment_mask.view(batch_size * (edu_num-1), edu_num)
         return stack_state, segment_mask
-    
+
+    def prepare_segmentation_for_training_bu(self, encoder_output, merge_batch, state_batch):
+        batch_size, edu_num, hidden = encoder_output.shape
+        stack_state = Variable(torch.zeros(batch_size, edu_num-1, edu_num, hidden)).type(torch.FloatTensor)
+        stack_mask = Variable(torch.zeros(batch_size, edu_num-1, edu_num)).type(torch.LongTensor)
+        stack_merge = Variable(torch.zeros(batch_size, edu_num-1, edu_num)).type(torch.FloatTensor)
+        for idx in range(batch_size):
+            merges, states = merge_batch[idx], state_batch[idx]
+            for idy in range(len(merges)):
+                merge, state_spans = merges[idy], states[idy]
+                for idz, state_span in enumerate(state_spans):
+                    start, end = state_span
+                    stack_state[idx, idy, idz] = encoder_output[idx, start:end+1].mean(0)
+                    stack_mask[idx, idy, idz] = 1
+                for idz in range(len(merge)):
+                    stack_merge[idx, idy, idz] = merge[idz]
+        stack_num = batch_size * (edu_num - 1)
+        if self.config.use_gpu:
+            stack_state = stack_state.cuda()
+            stack_mask = stack_mask.cuda()
+            stack_merge = stack_merge.cuda()
+        return stack_state.view(stack_num, edu_num, -1), stack_mask.view(stack_num, -1), stack_merge.view(stack_num, -1)
+
     def set_segment_prediction_for_training(self, segment_outputs, segment_masks):
         batch_size, iters, edu_num = segment_outputs.shape
         segment_masks = torch.sum(segment_masks, dim=-1)
@@ -540,9 +615,14 @@ class MainArchitecture(nn.Module):
 
     def decode_training_bu(self, encoder_output, gold_nuclear_relation, gold_bottom_up: List[GoldBottomUp], len_golds):
         batch_size, edu_size, hidden_size = encoder_output.shape
+        merge_batch, state_batch = [], []
         for idx in range(batch_size):
             self.index_output[idx]=[]
-        all_hidden_states1, merge_masks, stack_merges = self.prepare_segmentation_for_training_bu(encoder_output, gold_bottom_up)
+            merges, states = left_first_construction(gold_bottom_up[idx])
+            merge_batch.append(merges)
+            state_batch.append(states)
+
+        all_hidden_states1, merge_masks, stack_merges = self.prepare_segmentation_for_training_bu(encoder_output, merge_batch, state_batch)
         merge_outputs, rnn_outputs = self.run_rnn_segmentation(all_hidden_states1, merge_masks)
         self.set_segment_prediction_for_training(merge_outputs.view(batch_size, edu_size-1, -1), 
                 merge_masks.view(batch_size, edu_size-1, -1))
@@ -694,7 +774,8 @@ class MainArchitecture(nn.Module):
             return cost, cost.item()
         else:
             if self.config.beam_search == 1:
-                gs, results = self.decode_testing(encoder_output, span)
+                # gs, results = self.decode_testing(encoder_output, span)
+                gs, results = self.decode_testing_bu(encoder_output, gold_bottom_up)
             else: #do beam search
                 # not supported yet
                 raise NotImplementedError('Beam search has not been implemented')
