@@ -11,6 +11,7 @@ from in_out.instance import CResult, Gold, GoldBottomUp
 from models.metric import Metric
 from modules.layer import *
 from typing import List
+from functools import lru_cache
 
 def left_first_construction(gold: GoldBottomUp):
     merge_masks = []
@@ -20,7 +21,7 @@ def left_first_construction(gold: GoldBottomUp):
         merge_mask[gold.merge_mask.index(1)] = 1
         merge_masks.append(merge_mask)
         state_spans.append(gold.state_spans)
-        gold = gold.merge(gold.merges[0])
+        gold = gold.merge(gold.merges[0], "", "")
     return merge_masks, state_spans
 
 class MainArchitecture(nn.Module):
@@ -559,16 +560,24 @@ class MainArchitecture(nn.Module):
         stack_state = Variable(torch.zeros(batch_size, edu_num-1, edu_num, hidden)).type(torch.FloatTensor)
         stack_mask = Variable(torch.zeros(batch_size, edu_num-1, edu_num)).type(torch.LongTensor)
         stack_merge = Variable(torch.zeros(batch_size, edu_num-1, edu_num)).type(torch.FloatTensor)
+        @lru_cache(maxsize=None)
+        def encoder_output_lookup(idx, start, end):
+            return encoder_output[idx, start:end+1].mean(0)
+
         for idx in range(batch_size):
             merges, states = merge_batch[idx], state_batch[idx]
             for idy in range(len(merges)):
                 merge, state_spans = merges[idy], states[idy]
-                for idz, state_span in enumerate(state_spans):
+                encoder_state = []
+                for state_span in state_spans:
                     start, end = state_span
-                    stack_state[idx, idy, idz] = encoder_output[idx, start:end+1].mean(0)
-                    stack_mask[idx, idy, idz] = 1
-                for idz in range(len(merge)):
-                    stack_merge[idx, idy, idz] = merge[idz]
+                    encoder_state.append(encoder_output_lookup(idx, start, end))
+                idz = len(state_spans)
+                stack_state[idx, idy, :idz] = torch.stack(encoder_state)
+                stack_mask[idx, idy, :idz] = 1
+                idz = len(merge)
+                stack_merge[idx, idy, :idz] = torch.FloatTensor(merge)
+
         stack_num = batch_size * (edu_num - 1)
         if self.config.use_gpu:
             stack_state = stack_state.cuda()
@@ -770,7 +779,15 @@ class MainArchitecture(nn.Module):
             if self.config.flag_oracle:
                 raise NotImplementedError("Dynamic oracle not implemented for bottom up parser")
             else:
-                cost = self.decode_training_bu(encoder_output, gold_nuclear_relation, gold_bottom_up, len_golds)
+                from torch.autograd.profiler import profile, record_function
+                with profile(record_shapes=True) as prof:
+                    with record_function("decode_training"):
+                        cost = self.decode_training(encoder_output, gold_nuclear_relation, gold_segmentation, span, len_golds, depth)
+                print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
+                with profile(record_shapes=True) as prof:
+                    with record_function("decode_training_bu"):
+                        cost = self.decode_training_bu(encoder_output, gold_nuclear_relation, gold_bottom_up, len_golds)
+                print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
             return cost, cost.item()
         else:
             if self.config.beam_search == 1:
