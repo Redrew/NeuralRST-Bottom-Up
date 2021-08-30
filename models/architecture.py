@@ -779,15 +779,8 @@ class MainArchitecture(nn.Module):
             if self.config.flag_oracle:
                 raise NotImplementedError("Dynamic oracle not implemented for bottom up parser")
             else:
-                from torch.autograd.profiler import profile, record_function
-                with profile(record_shapes=True) as prof:
-                    with record_function("decode_training"):
-                        cost = self.decode_training(encoder_output, gold_nuclear_relation, gold_segmentation, span, len_golds, depth)
-                print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
-                with profile(record_shapes=True) as prof:
-                    with record_function("decode_training_bu"):
-                        cost = self.decode_training_bu(encoder_output, gold_nuclear_relation, gold_bottom_up, len_golds)
-                print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
+                # cost = self.decode_training(encoder_output, gold_nuclear_relation, gold_segmentation, span, len_golds, depth)
+                cost = self.decode_training_bu(encoder_output, gold_nuclear_relation, gold_bottom_up, len_golds)
             return cost, cost.item()
         else:
             if self.config.beam_search == 1:
