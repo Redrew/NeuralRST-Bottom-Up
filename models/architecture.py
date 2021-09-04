@@ -13,7 +13,7 @@ from modules.layer import *
 from typing import List
 from functools import lru_cache
 
-def left_first_construction(gold: GoldBottomUp):
+def left_only_construction(gold: GoldBottomUp):
     merge_masks = []
     state_spans = []
     while gold.merges:
@@ -23,6 +23,23 @@ def left_first_construction(gold: GoldBottomUp):
         state_spans.append(gold.state_spans)
         gold = gold.merge(gold.merges[0], "", "")
     return merge_masks, state_spans
+
+def left_first_construction(gold: GoldBottomUp):
+    merge_masks = []
+    state_spans = []
+    while gold.merges:
+        merge_mask = gold.merge_mask.copy()
+        merge_masks.append(merge_mask)
+        state_spans.append(gold.state_spans)
+        gold = gold.merge(gold.merges[0], "", "")
+    return merge_masks, state_spans
+
+def select_left_first_valid_merge(merge_out):
+    valid_merge = merge_out > 0
+    if not torch.any(valid_merge):
+        return torch.argmax(merge_out)
+    else:
+        return valid_merge.nonzero()[0]
 
 class MainArchitecture(nn.Module):
     def __init__(self, vocab, config, word_embedd, tag_embedd, etype_embedd):
@@ -35,6 +52,15 @@ class MainArchitecture(nn.Module):
         self.config = config
         self.vocab = vocab
         self.static_embedd = config.static_word_embedding
+
+        if config.merge_order == 'left-only':
+            self.construct_merge_states = left_only_construction
+            self.select_merge = torch.argmax
+        elif config.merge_order == 'left-first':
+            self.construct_merge_states = left_first_construction
+            self.select_merge = select_left_first_valid_merge
+        else:
+            raise NotImplementedError('Merge order is not supported')
 
         dim_enc1 = config.word_dim
         if self.static_embedd:
@@ -153,7 +179,7 @@ class MainArchitecture(nn.Module):
         tensor = self.run_rnn_edu(word_output, syntax_output, token_denominator, word_denominator, input_etype, edu_mask) 
         return tensor
 
-    def update_eval_metric(self, gold_segmentation_index, nuclear_relation, gold_nuclear_relation, len_golds):
+    def update_eval_metric(self, gold_span_index, nuclear_relation, gold_nuclear_relation, len_golds):
         batch_size, _, _ = nuclear_relation.shape
         _, nuclear_relation_idx = torch.max(nuclear_relation, 2)
         
@@ -162,8 +188,12 @@ class MainArchitecture(nn.Module):
             self.metric_nuclear_relation.overall_label_count += len_golds[idx]
             
             for idy in range(len_golds[idx]):
-                if self.index_output[idx][idy] == int(gold_segmentation_index[idx, idy]):
-                    self.metric_span.correct_label_count += 1
+                span_index = self.index_output[idx][idy]
+                if gold_span_index.dim() == 2:
+                    self.metric_span.correct_label_count += span_index == int(gold_span_index[idx, idy])
+                else:
+                    self.metric_span.correct_label_count += gold_span_index[idx, idy, span_index]
+                
                 if nuclear_relation_idx[idx, idy].item() == gold_nuclear_relation[idx, idy].item():
                     self.metric_nuclear_relation.correct_label_count += 1
         
@@ -245,9 +275,8 @@ class MainArchitecture(nn.Module):
             seg_loss.append(cur_loss)
         seg_loss = sum(seg_loss) / merge_masks.sum()
         loss = self.config.loss_seg * seg_loss
-        _, gold_merge_index = torch.max(stack_merges, 1)
-        gold_merge_index = gold_merge_index.view(batch_size, -1)
-        self.update_eval_metric(gold_merge_index, nuclear_relation, gold_nuclear_relation, len_golds)
+        gold_merges = stack_merges.view(batch_size, stack_num//batch_size, -1)
+        self.update_eval_metric(gold_merges, nuclear_relation, gold_nuclear_relation, len_golds)
         return loss
 
     # Helper function
@@ -328,21 +357,6 @@ class MainArchitecture(nn.Module):
         stack_state = stack_state.view(batch_size, edu_num, hidden)
         return stack_state, segment_mask
 
-    def prepare_segmentation_for_testing_bu(self, encoder_output, state_batch):
-        batch_size, edu_num, hidden = encoder_output.shape
-        stack_state = Variable(torch.zeros(batch_size, edu_num, hidden)).type(torch.FloatTensor)
-        stack_mask = Variable(torch.zeros(batch_size, edu_num)).type(torch.LongTensor)
-        for idx in range(batch_size):
-            state_spans = states[idx]
-            for idz, state_span in enumerate(state_spans):
-                start, end = state_span
-                stack_state[idx, idz] = encoder_output[idx, start:end+1].mean(0)
-                stack_mask[idx, idz] = 1
-        if self.config.use_gpu:
-            stack_state = stack_state.cuda()
-            stack_mask = stack_mask.cuda()
-        return stack_state, stack_mask
-
     def prepare_prediction_for_testing(self, encoder_output, cur_span_pairs):
         batch_size, edu_num, hidden = encoder_output.shape
         bucket = Variable(torch.zeros(batch_size, 1, hidden)).type(torch.FloatTensor)
@@ -389,7 +403,7 @@ class MainArchitecture(nn.Module):
         stack_state = stack_state.view(batch_size, -1)
         return stack_state
 
-    def prepare_segmentation_for_testing_bu(self, encoder_output, state_batch):
+    def prepare_merge_for_testing_bu(self, encoder_output, state_batch):
         batch_size, edu_num, hidden = encoder_output.shape
         stack_state = Variable(torch.zeros(batch_size, edu_num, hidden)).type(torch.FloatTensor)
         stack_mask = Variable(torch.zeros(batch_size, edu_num)).type(torch.LongTensor)
@@ -440,7 +454,7 @@ class MainArchitecture(nn.Module):
         
         all_nuclear_relation_output = []
         while self.not_finished_bu(trees):
-            hidden_state1, merge_mask = self.prepare_segmentation_for_testing_bu(encoder_output, state)
+            hidden_state1, merge_mask = self.prepare_merge_for_testing_bu(encoder_output, state)
             merge_output, rnn_output = self.run_rnn_segmentation(hidden_state1, merge_mask) #output in cuda-2
             state, trees = self.update_state(merge_output, merge_mask, trees)
 
@@ -466,7 +480,7 @@ class MainArchitecture(nn.Module):
                 new_trees.append(tree)
             else:
                 num_tokens = mask.sum()
-                merge_idx = torch.argmax(merge_out[:num_tokens-1]).item()
+                merge_idx = self.select_merge(merge_out[:num_tokens-1]).item()
                 new_trees.append(tree.merge(merge_idx, "NUCLEAR SATELLITE", ""))
         state_spans = [t.state_spans for t in new_trees]
         return state_spans, new_trees
@@ -555,7 +569,7 @@ class MainArchitecture(nn.Module):
         segment_mask = segment_mask.view(batch_size * (edu_num-1), edu_num)
         return stack_state, segment_mask
 
-    def prepare_segmentation_for_training_bu(self, encoder_output, merge_batch, state_batch):
+    def prepare_merge_for_training_bu(self, encoder_output, merge_batch, state_batch):
         batch_size, edu_num, hidden = encoder_output.shape
         stack_state = Variable(torch.zeros(batch_size, edu_num-1, edu_num, hidden)).type(torch.FloatTensor)
         stack_mask = Variable(torch.zeros(batch_size, edu_num-1, edu_num)).type(torch.LongTensor)
@@ -627,11 +641,11 @@ class MainArchitecture(nn.Module):
         merge_batch, state_batch = [], []
         for idx in range(batch_size):
             self.index_output[idx]=[]
-            merges, states = left_first_construction(gold_bottom_up[idx])
+            merges, states = self.construct_merge_states(gold_bottom_up[idx])
             merge_batch.append(merges)
             state_batch.append(states)
 
-        all_hidden_states1, merge_masks, stack_merges = self.prepare_segmentation_for_training_bu(encoder_output, merge_batch, state_batch)
+        all_hidden_states1, merge_masks, stack_merges = self.prepare_merge_for_training_bu(encoder_output, merge_batch, state_batch)
         merge_outputs, rnn_outputs = self.run_rnn_segmentation(all_hidden_states1, merge_masks)
         self.set_segment_prediction_for_training(merge_outputs.view(batch_size, edu_size-1, -1), 
                 merge_masks.view(batch_size, edu_size-1, -1))

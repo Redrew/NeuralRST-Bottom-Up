@@ -8,6 +8,7 @@ class Config(object):
         if args is None:
             return
         self.use_gpu = torch.cuda.is_available()
+        self.merge_order = args.merge_order
         self.use_dynamic_oracle = args.use_dynamic_oracle == 1
         self.flag_oracle = False
         self.word_embedding = args.word_embedding
@@ -72,6 +73,7 @@ class Config(object):
     def save(self):
         f = open(self.model_path + '/config.cfg', 'w')
         f.write("use_gpu = " + str(self.use_gpu) + '\n')
+        f.write("merge_order= " + str(self.merge_order) + '\n')
         f.write("use_dynamic_oracle = "+ str(self.use_dynamic_oracle) + '\n')
         f.write("flag_oracle = " + str(self.flag_oracle) + '\n')
         f.write("word_embedding = " + str(self.word_embedding) + '\n')
@@ -134,6 +136,7 @@ class Config(object):
     def load_config(self, path):
         f = open(path, 'r')
         self.use_gpu = f.readline().strip().split(' = ')[-1] == 'True'
+        self.merge_order = f.readline().strip().split(' = ')[-1]
         self.use_dynamic_oracle = f.readline().strip().split(' = ')[-1] == 'True'
         self.flag_oracle = f.readline().strip().split(' = ')[-1] == 'True'
         self.word_embedding = f.readline().strip().split(' = ')[-1] 

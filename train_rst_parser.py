@@ -104,6 +104,7 @@ def predict(network, instances, vocab, config, logger):
 def main():
     start_a = time.time()
     args_parser = argparse.ArgumentParser()
+    args_parser.add_argument('--merge_order', default='left-only', choices=['left-only', 'left-first'])
     args_parser.add_argument('--word_embedding', default='glove', help='Embedding for words')
     args_parser.add_argument('--word_embedding_file', default=main_path+'Data/NeuralRST/glove.6B.200d.txt.gz')
     args_parser.add_argument('--train', default=main_path+'Data/NeuralRST/rst.train312')  
