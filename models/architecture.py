@@ -35,7 +35,7 @@ def left_first_construction(gold: GoldBottomUp):
     return merge_masks, state_spans
 
 def select_left_first_valid_merge(merge_out):
-    valid_merge = merge_out > 0
+    valid_merge = merge_out > 0.5
     if not torch.any(valid_merge):
         return torch.argmax(merge_out)
     else:
