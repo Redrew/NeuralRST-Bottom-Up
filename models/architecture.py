@@ -612,6 +612,19 @@ class MainArchitecture(nn.Module):
                 _, out = segment_outputs[idx, idy, :num_tokens-1].max(0)
                 self.index_output[idx].append(int(out))
 
+    def set_merge_prediction_for_training(self, segment_outputs, segment_masks):
+        batch_size, iters, edu_num = segment_outputs.shape
+        segment_masks = torch.sum(segment_masks, dim=-1)
+        assert iters == edu_num -1
+        
+        for idx in range(batch_size):
+            for idy in range(iters):
+                num_tokens = int(segment_masks[idx, idy].item())
+                if num_tokens == 0:
+                    continue
+                out = self.select_merge(segment_outputs[idx, idy, :num_tokens-1]).item()
+                self.index_output[idx].append(out)
+
     # Gather all of span possibilities during training, avoid the loop
     def decode_training(self, encoder_output, gold_nuclear_relation, gold_segmentation, span, len_golds, depth):
         batch_size, edu_size, hidden_size = encoder_output.shape
@@ -647,7 +660,7 @@ class MainArchitecture(nn.Module):
 
         all_hidden_states1, merge_masks, stack_merges = self.prepare_merge_for_training_bu(encoder_output, merge_batch, state_batch)
         merge_outputs, rnn_outputs = self.run_rnn_segmentation(all_hidden_states1, merge_masks)
-        self.set_segment_prediction_for_training(merge_outputs.view(batch_size, edu_size-1, -1), 
+        self.set_merge_prediction_for_training(merge_outputs.view(batch_size, edu_size-1, -1), 
                 merge_masks.view(batch_size, edu_size-1, -1))
         nuclear_relation = torch.zeros((batch_size, edu_size, 1))
         if self.config.use_gpu:

@@ -196,3 +196,5 @@ class Config(object):
         self.elem_alpha = float(f.readline().strip().split(' = ')[-1])
         self.seed = int(f.readline().strip().split(' = ')[-1])
         f.close()
+        
+        self.static_word_embedding = self.word_embedding in STATIC_EMBEDDINGS
