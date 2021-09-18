@@ -34,6 +34,16 @@ def left_first_construction(gold: GoldBottomUp):
         gold = gold.merge(gold.merges[0], "", "")
     return merge_masks, state_spans
 
+def random_construction(gold: GoldBottomUp):
+    merge_masks = []
+    state_spans = []
+    while gold.merges:
+        merge_mask = gold.merge_mask.copy()
+        merge_masks.append(merge_mask)
+        state_spans.append(gold.state_spans)
+        gold = gold.merge(np.random.choice(gold.merges), "", "")
+    return merge_masks, state_spans
+
 def select_left_first_valid_merge(merge_out):
     valid_merge = merge_out > 0.5
     if not torch.any(valid_merge):
@@ -59,6 +69,9 @@ class MainArchitecture(nn.Module):
         elif config.merge_order == 'left-first':
             self.construct_merge_states = left_first_construction
             self.select_merge = select_left_first_valid_merge
+        elif config.merge_order == 'random':
+            self.construct_merge_states = random_construction
+            self.select_merge = torch.argmax
         else:
             raise NotImplementedError('Merge order is not supported')
 
