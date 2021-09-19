@@ -73,7 +73,7 @@ class Config(object):
     def save(self):
         f = open(self.model_path + '/config.cfg', 'w')
         f.write("use_gpu = " + str(self.use_gpu) + '\n')
-        f.write("merge_order= " + str(self.merge_order) + '\n')
+        f.write("merge_order = " + str(self.merge_order) + '\n')
         f.write("use_dynamic_oracle = "+ str(self.use_dynamic_oracle) + '\n')
         f.write("flag_oracle = " + str(self.flag_oracle) + '\n')
         f.write("word_embedding = " + str(self.word_embedding) + '\n')
