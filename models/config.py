@@ -198,3 +198,4 @@ class Config(object):
         f.close()
         
         self.static_word_embedding = self.word_embedding in STATIC_EMBEDDINGS
+        self.contextual_word_embedding = not self.static_word_embedding

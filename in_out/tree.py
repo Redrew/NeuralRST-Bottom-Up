@@ -13,6 +13,12 @@ class Tree(object):
     def __str__(self):
         return str(self) + ' ' + str(self.edu_span) +' at ' + id(self)
 
+    def format_tree(self):
+        if self.left is None and self.right is None:
+            return f'{self.edu_span[0]}'
+        else:
+            return f'({self.left.format_tree()} {self.right.format_tree()})'
+
     def get_id(self, vocab):
         tmp = self.nuclear.split(' ')
         action_str = "REDUCE_" + tmp[0][0] + tmp[1][0] + '_' + self.relation
