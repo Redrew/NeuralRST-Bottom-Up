@@ -119,6 +119,7 @@ class Instance(object):
 # Gold represents Top-Down Discourse Parser attributes
 class Gold(object):
     def __init__(self, tree):
+        self.tree = tree
         self.edu_span = []
         self.segmentation = []
         self.nuclear = []
@@ -251,7 +252,7 @@ class GoldBottomUp:
             merges = None
             assert isinstance(merge_node, int)
             merge_idx = merge_node
-            merge_span = (state[merge_idx].edu_span[0], state[merge_idx+1].edu_span[0])
+            merge_span = (state[merge_idx].edu_span[0], state[merge_idx+1].edu_span[1])
         else:
             merges = self.merges.copy()
             if isinstance(merge_node, int):

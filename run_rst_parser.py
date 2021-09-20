@@ -18,6 +18,35 @@ from models.config import Config
 from models.architecture import MainArchitecture
 from train_rst_parser import predict, load_word_embedding_and_tokenizer
 
+def evaluate_train_data(network, train_instances, vocab, config, logger):
+    total_data = len(train_instances)
+
+    def get_subtrees(data, indices):
+        subtrees = []
+        for i in indices:
+            subtrees.append(data[i].result)
+        return subtrees
+
+    permutation = torch.randperm(total_data).long()
+    network.metric_span.reset()
+    network.metric_nuclear_relation.reset()
+    time_start = datetime.now()
+    for i in range(0, total_data, config.batch_size):
+        network.train()
+        network.training = True
+            
+        indices = permutation[i: i+config.batch_size]
+        subset_data = batch_data_variable(train_instances, indices, vocab, config)
+        gold_subtrees = get_subtrees(train_instances, indices)
+            
+        cost, cost_val = network.loss(subset_data, gold_subtrees)
+
+        time_elapsed = datetime.now() - time_start
+        m,s = divmod(time_elapsed.seconds, 60)
+
+    logger.info('CorrectSpan: %.2f, CorrectNuclearRelation: %.2f - {} mins {} secs'.format(m,s) % (
+        network.metric_span.get_accuracy(), network.metric_nuclear_relation.get_accuracy()))
+
 def main():
     args_parser = argparse.ArgumentParser()
     args_parser.add_argument('--config_path', required=True)
@@ -43,27 +72,7 @@ def main():
     logger.info("Reading Train, and predict...")
     reader = Reader(config.train_path, config.train_syn_feat_path)
     train_instances  = reader.read_data()
-    total_data = len(train_instances)
-
-    permutation = torch.randperm(total_data).long()
-    network.metric_span.reset()
-    network.metric_nuclear_relation.reset()
-    time_start = datetime.now()
-    for i in range(0, total_data, batch_size):
-        network.train()
-        network.training = True
-            
-        indices = permutation[i: i+batch_size]
-        subset_data = batch_data_variable(train_instances, indices, vocab, config)
-        gold_subtrees = get_subtrees(train_instances, indices)
-            
-        cost, cost_val = network.loss(subset_data, gold_subtrees, epoch=epoch)
-
-        time_elapsed = datetime.now() - time_start
-        m,s = divmod(time_elapsed.seconds, 60)
-
-    logger.info('CorrectSpan: %.2f, CorrectNuclearRelation: %.2f - {} mins {} secs'.format(m,s) % (
-        network.metric_span.get_accuracy(), network.metric_nuclear_relation.get_accuracy()))
+    evaluate_train_data(network, train_instances, vocab, config, logger)
 
     logger.info('Reading dev instance, and predict...')
     reader = Reader(config.dev_path, config.dev_syn_feat_path)
