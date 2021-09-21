@@ -69,20 +69,31 @@ def main():
         network = network.cuda()
     network.eval()
     
-    logger.info("Reading Train, and predict...")
-    reader = Reader(config.train_path, config.train_syn_feat_path)
-    train_instances  = reader.read_data()
-    evaluate_train_data(network, train_instances, vocab, config, logger)
+    # network.training = True
+    # logger.info("Reading Train, and predict...")
+    # reader = Reader(config.train_path, config.train_syn_feat_path)
+    # train_instances  = reader.read_data()
+    # evaluate_train_data(network, train_instances, vocab, config, logger)
 
+    network.training = False
+
+    network.metric_span.reset()
+    network.metric_nuclear_relation.reset()
     logger.info('Reading dev instance, and predict...')
     reader = Reader(config.dev_path, config.dev_syn_feat_path)
     dev_instances  = reader.read_data()
     predict(network, dev_instances, vocab, config, logger)
+    logger.info('CorrectSpan: %.2f, CorrectNuclearRelation: %.2f' % (
+        network.metric_span.get_accuracy(), network.metric_nuclear_relation.get_accuracy()))
 
+    network.metric_span.reset()
+    network.metric_nuclear_relation.reset()
     logger.info('Reading test instance, and predict...')
     reader = Reader(config.test_path, config.test_syn_feat_path)
     test_instances  = reader.read_data()
     predict(network, test_instances, vocab, config, logger)
+    logger.info('CorrectSpan: %.2f, CorrectNuclearRelation: %.2f' % (
+        network.metric_span.get_accuracy(), network.metric_nuclear_relation.get_accuracy()))
 
 if __name__ == '__main__':
     main()
