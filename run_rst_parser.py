@@ -15,7 +15,7 @@ from in_out.preprocess import batch_data_variable
 from models.vocab import Vocab
 from models.metric import Metric
 from models.config import Config
-from models.architecture import MainArchitecture
+from models.architecture import BottomUpArchitecture
 from train_rst_parser import predict, load_word_embedding_and_tokenizer
 
 def evaluate_train_data(network, train_instances, vocab, config, logger):
@@ -62,7 +62,7 @@ def main():
     etype_embedd = construct_embedding(etype_alpha, config.etype_dim, config.freeze)
     word_embedd, word_tokenizer = load_word_embedding_and_tokenizer(word_alpha, config)
 
-    network = MainArchitecture(vocab, config, word_embedd, tag_embedd, etype_embedd) 
+    network = BottomUpArchitecture(vocab, config, word_embedd, tag_embedd, etype_embedd) 
     network.load_state_dict(torch.load(config.model_name))
 
     if config.use_gpu:

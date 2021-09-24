@@ -51,9 +51,9 @@ def select_left_first_valid_merge(merge_out):
     else:
         return valid_merge.nonzero()[0]
 
-class MainArchitecture(nn.Module):
+class TopDownArchitecture(nn.Module):
     def __init__(self, vocab, config, word_embedd, tag_embedd, etype_embedd):
-        super(MainArchitecture, self).__init__()
+        super(TopDownArchitecture, self).__init__()
         
         self.word_embedd = word_embedd
         self.tag_embedd = tag_embedd
@@ -62,18 +62,6 @@ class MainArchitecture(nn.Module):
         self.config = config
         self.vocab = vocab
         self.static_embedd = config.static_word_embedding
-
-        if config.merge_order == 'left-only':
-            self.construct_merge_states = left_only_construction
-            self.select_merge = torch.argmax
-        elif config.merge_order == 'left-first':
-            self.construct_merge_states = left_first_construction
-            self.select_merge = select_left_first_valid_merge
-        elif config.merge_order == 'random':
-            self.construct_merge_states = random_construction
-            self.select_merge = torch.argmax
-        else:
-            raise NotImplementedError('Merge order is not supported')
 
         dim_enc1 = config.word_dim
         if self.static_embedd:
@@ -234,12 +222,6 @@ class MainArchitecture(nn.Module):
             subtrees.append(g.get_subtree())
         return gs, subtrees
 
-
-    def get_prediction_bu(self, bottom_up_trees):
-        gs = [Gold(bu.get_tree()) for bu in bottom_up_trees]
-        subtrees = [g.get_subtree() for g in gs]
-        return gs, subtrees
-
     def compute_loss(self, segmentation, gold_segmentation, segment_mask, nuclear_relation, gold_nuclear_relation, len_golds, depth):    
         #nuclear_relation loss
         batch_size, nuc_len, nuc_num = nuclear_relation.shape
@@ -274,24 +256,6 @@ class MainArchitecture(nn.Module):
             loss += self.config.loss_nuc_rel * nuc_rel_loss
         return loss
     
-    def compute_loss_bu(self, merge_outputs, stack_merges, merge_masks, nuclear_relation, gold_nuclear_relation, len_golds):
-        seg_loss = []
-        merge_masks = merge_masks.bool()
-        batch_size = nuclear_relation.shape[0]
-        stack_num = merge_masks.shape[0]
-        for idx in range(stack_num):
-            stack_mask = merge_masks[idx]
-            if not torch.any(stack_mask):
-                continue
-            output, target = merge_outputs[idx, stack_mask], stack_merges[idx, stack_mask]
-            cur_loss = F.binary_cross_entropy(output, target, reduction='sum')
-            seg_loss.append(cur_loss)
-        seg_loss = sum(seg_loss) / merge_masks.sum()
-        loss = self.config.loss_seg * seg_loss
-        gold_merges = stack_merges.view(batch_size, stack_num//batch_size, -1)
-        self.update_eval_metric(gold_merges, nuclear_relation, gold_nuclear_relation, len_golds)
-        return loss
-
     # Helper function
     def not_finished(self, span, batch_size):
         for idx in range(batch_size):
@@ -416,21 +380,6 @@ class MainArchitecture(nn.Module):
         stack_state = stack_state.view(batch_size, -1)
         return stack_state
 
-    def prepare_merge_for_testing_bu(self, encoder_output, state_batch):
-        batch_size, edu_num, hidden = encoder_output.shape
-        stack_state = Variable(torch.zeros(batch_size, edu_num, hidden)).type(torch.FloatTensor)
-        stack_mask = Variable(torch.zeros(batch_size, edu_num)).type(torch.LongTensor)
-        for idx in range(batch_size):
-            state_spans = state_batch[idx]
-            for idz, state_span in enumerate(state_spans):
-                start, end = state_span
-                stack_state[idx, idz] = encoder_output[idx, start:end+1].mean(0)
-                stack_mask[idx, idz] = 1
-        if self.config.use_gpu:
-            stack_state = stack_state.cuda()
-            stack_mask = stack_mask.cuda()
-        return stack_state, stack_mask
-
     def decode_testing(self, encoder_output, span):
         batch_size, edu_size, hidden_size = encoder_output.shape
         span_initial = self.get_initial_span(span, batch_size) #act as queue
@@ -458,45 +407,6 @@ class MainArchitecture(nn.Module):
         all_segment_mask = torch.cat(all_segment_mask, dim=1)
         all_nuclear_relation_output = torch.cat(all_nuclear_relation_output, dim=1)
         return self.get_prediction(all_nuclear_relation_output)
-
-    def decode_testing_bu(self, encoder_output, gold_bottom_up):
-        batch_size, edu_size, hidden_size = encoder_output.shape
-        state, trees = self.get_initial_state(gold_bottom_up)
-        for idx in range(batch_size):
-            self.index_output[idx]=[]
-        
-        all_nuclear_relation_output = []
-        while self.not_finished_bu(trees):
-            hidden_state1, merge_mask = self.prepare_merge_for_testing_bu(encoder_output, state)
-            merge_output, rnn_output = self.run_rnn_segmentation(hidden_state1, merge_mask) #output in cuda-2
-            state, trees = self.update_state(merge_output, merge_mask, trees)
-
-        return self.get_prediction_bu(trees)
-
-    def get_initial_state(self, gold_bottom_up):
-        state_spans = [gold.state_spans for gold in gold_bottom_up]
-        trees = [gold.construct_new_copy() for gold in gold_bottom_up]
-        return state_spans, trees
-
-    def not_finished_bu(self, trees):
-        for tree in trees:
-            if not tree.done:
-                return True
-        return False
-
-    def update_state(self, merge_output, merge_mask, trees):
-        new_trees = []
-        batch_size = merge_output.shape[0]
-        for idx in range(batch_size):
-            merge_out, mask, tree = merge_output[idx], merge_mask[idx], trees[idx]
-            if tree.done:
-                new_trees.append(tree)
-            else:
-                num_tokens = mask.sum()
-                merge_idx = self.select_merge(merge_out[:num_tokens-1]).item()
-                new_trees.append(tree.merge(merge_idx, "NUCLEAR SATELLITE", ""))
-        state_spans = [t.state_spans for t in new_trees]
-        return state_spans, new_trees
     # End of testing -----------------------------------------------------------------------
 
 
@@ -581,37 +491,7 @@ class MainArchitecture(nn.Module):
         stack_state = stack_state.view(batch_size * (edu_num-1), edu_num, hidden)
         segment_mask = segment_mask.view(batch_size * (edu_num-1), edu_num)
         return stack_state, segment_mask
-
-    def prepare_merge_for_training_bu(self, encoder_output, merge_batch, state_batch):
-        batch_size, edu_num, hidden = encoder_output.shape
-        stack_state = Variable(torch.zeros(batch_size, edu_num-1, edu_num, hidden)).type(torch.FloatTensor)
-        stack_mask = Variable(torch.zeros(batch_size, edu_num-1, edu_num)).type(torch.LongTensor)
-        stack_merge = Variable(torch.zeros(batch_size, edu_num-1, edu_num)).type(torch.FloatTensor)
-        @lru_cache(maxsize=None)
-        def encoder_output_lookup(idx, start, end):
-            return encoder_output[idx, start:end+1].mean(0)
-
-        for idx in range(batch_size):
-            merges, states = merge_batch[idx], state_batch[idx]
-            for idy in range(len(merges)):
-                merge, state_spans = merges[idy], states[idy]
-                encoder_state = []
-                for state_span in state_spans:
-                    start, end = state_span
-                    encoder_state.append(encoder_output_lookup(idx, start, end))
-                idz = len(state_spans)
-                stack_state[idx, idy, :idz] = torch.stack(encoder_state)
-                stack_mask[idx, idy, :idz] = 1
-                idz = len(merge)
-                stack_merge[idx, idy, :idz] = torch.FloatTensor(merge)
-
-        stack_num = batch_size * (edu_num - 1)
-        if self.config.use_gpu:
-            stack_state = stack_state.cuda()
-            stack_mask = stack_mask.cuda()
-            stack_merge = stack_merge.cuda()
-        return stack_state.view(stack_num, edu_num, -1), stack_mask.view(stack_num, -1), stack_merge.view(stack_num, -1)
-
+    
     def set_segment_prediction_for_training(self, segment_outputs, segment_masks):
         batch_size, iters, edu_num = segment_outputs.shape
         segment_masks = torch.sum(segment_masks, dim=-1)
@@ -624,19 +504,6 @@ class MainArchitecture(nn.Module):
                     continue
                 _, out = segment_outputs[idx, idy, :num_tokens-1].max(0)
                 self.index_output[idx].append(int(out))
-
-    def set_merge_prediction_for_training(self, segment_outputs, segment_masks):
-        batch_size, iters, edu_num = segment_outputs.shape
-        segment_masks = torch.sum(segment_masks, dim=-1)
-        assert iters == edu_num -1
-        
-        for idx in range(batch_size):
-            for idy in range(iters):
-                num_tokens = int(segment_masks[idx, idy].item())
-                if num_tokens == 0:
-                    continue
-                out = self.select_merge(segment_outputs[idx, idy, :num_tokens-1]).item()
-                self.index_output[idx].append(out)
 
     # Gather all of span possibilities during training, avoid the loop
     def decode_training(self, encoder_output, gold_nuclear_relation, gold_segmentation, span, len_golds, depth):
@@ -661,26 +528,6 @@ class MainArchitecture(nn.Module):
         return self.compute_loss(segment_outputs, gold_segmentation, segment_masks, \
                                      nuclear_relation_outputs, gold_nuclear_relation, \
                                      len_golds, depth)
-
-    def decode_training_bu(self, encoder_output, gold_nuclear_relation, gold_bottom_up: List[GoldBottomUp], len_golds):
-        batch_size, edu_size, hidden_size = encoder_output.shape
-        merge_batch, state_batch = [], []
-        for idx in range(batch_size):
-            self.index_output[idx]=[]
-            merges, states = self.construct_merge_states(gold_bottom_up[idx])
-            merge_batch.append(merges)
-            state_batch.append(states)
-
-        all_hidden_states1, merge_masks, stack_merges = self.prepare_merge_for_training_bu(encoder_output, merge_batch, state_batch)
-        merge_outputs, rnn_outputs = self.run_rnn_segmentation(all_hidden_states1, merge_masks)
-        self.set_merge_prediction_for_training(merge_outputs.view(batch_size, edu_size-1, -1), 
-                merge_masks.view(batch_size, edu_size-1, -1))
-        nuclear_relation = torch.zeros((batch_size, edu_size, 1))
-        if self.config.use_gpu:
-            nuclear_relation = nuclear_relation.cuda()
-        return self.compute_loss_bu(merge_outputs, stack_merges, merge_masks, nuclear_relation, gold_nuclear_relation, len_golds)
-
-        
     # End of training with static oracle ---------------------------------------------------
  
 
@@ -812,20 +659,201 @@ class MainArchitecture(nn.Module):
             gold_nuclear, gold_relation, gold_nuclear_relation, gold_segmentation, span, len_golds, depth, gold_bottom_up = subset_data
         encoder_output = self.forward_all(words, tags, etypes, edu_mask, token_mask, word_mask, token_denominator, word_denominator, syntax)
         if self.training:
-            # if self.config.flag_oracle:
-            #     cost = self.decode_training_dynamic_oracle(encoder_output, gold_nuclear_relation, gold_segmentation, span, len_golds, depth)
-            # else:
-            #     cost = self.decode_training(encoder_output, gold_nuclear_relation, gold_segmentation, span, len_golds, depth)
             if self.config.flag_oracle:
-                raise NotImplementedError("Dynamic oracle not implemented for bottom up parser")
+                cost = self.decode_training_dynamic_oracle(encoder_output, gold_nuclear_relation, gold_segmentation, span, len_golds, depth)
             else:
-                # cost = self.decode_training(encoder_output, gold_nuclear_relation, gold_segmentation, span, len_golds, depth)
-                cost = self.decode_training_bu(encoder_output, gold_nuclear_relation, gold_bottom_up, len_golds)
+                cost = self.decode_training(encoder_output, gold_nuclear_relation, gold_segmentation, span, len_golds, depth)
             return cost, cost.item()
         else:
             if self.config.beam_search == 1:
-                # gs, results = self.decode_testing(encoder_output, span)
-                gs, results = self.decode_testing_bu(encoder_output, gold_bottom_up)
+                gs, results = self.decode_testing(encoder_output, span)
+            else: #do beam search
+                # not supported yet
+                raise NotImplementedError('Beam search has not been implemented')
+            return gs, results
+
+
+class BottomUpArchitecture(TopDownArchitecture):
+    def __init__(self, vocab, config, word_embedd, tag_embedd, etype_embedd):
+        super(BottomUpArchitecture, self).__init__(vocab, config, word_embedd, tag_embedd, etype_embedd)
+
+        if config.merge_order == 'left-only':
+            self.construct_merge_states = left_only_construction
+            self.select_merge = torch.argmax
+        elif config.merge_order == 'left-first':
+            self.construct_merge_states = left_first_construction
+            self.select_merge = select_left_first_valid_merge
+        elif config.merge_order == 'random':
+            self.construct_merge_states = random_construction
+            self.select_merge = torch.argmax
+        else:
+            raise NotImplementedError('Merge order is not supported')
+
+    def get_prediction(self, bottom_up_trees):
+        gs = [Gold(bu.get_tree()) for bu in bottom_up_trees]
+        subtrees = [g.get_subtree() for g in gs]
+        return gs, subtrees
+
+    def compute_loss(self, merge_outputs, stack_merges, merge_masks, nuclear_relation, gold_nuclear_relation, len_golds):
+        seg_loss = []
+        merge_masks = merge_masks.bool()
+        batch_size = nuclear_relation.shape[0]
+        stack_num = merge_masks.shape[0]
+        for idx in range(stack_num):
+            stack_mask = merge_masks[idx]
+            if not torch.any(stack_mask):
+                continue
+            output, target = merge_outputs[idx, stack_mask], stack_merges[idx, stack_mask]
+            cur_loss = F.binary_cross_entropy(output, target, reduction='sum')
+            seg_loss.append(cur_loss)
+        seg_loss = sum(seg_loss) / merge_masks.sum()
+        loss = self.config.loss_seg * seg_loss
+        gold_merges = stack_merges.view(batch_size, stack_num//batch_size, -1)
+        self.update_eval_metric(gold_merges, nuclear_relation, gold_nuclear_relation, len_golds)
+        return loss
+
+
+    # --------------------------------------------------------------------------------------
+    # Functions for testing start from here
+    def prepare_merge_for_testing(self, encoder_output, state_batch):
+        batch_size, edu_num, hidden = encoder_output.shape
+        stack_state = Variable(torch.zeros(batch_size, edu_num, hidden)).type(torch.FloatTensor)
+        stack_mask = Variable(torch.zeros(batch_size, edu_num)).type(torch.LongTensor)
+        for idx in range(batch_size):
+            state_spans = state_batch[idx]
+            for idz, state_span in enumerate(state_spans):
+                start, end = state_span
+                stack_state[idx, idz] = encoder_output[idx, start:end+1].mean(0)
+                stack_mask[idx, idz] = 1
+        if self.config.use_gpu:
+            stack_state = stack_state.cuda()
+            stack_mask = stack_mask.cuda()
+        return stack_state, stack_mask
+
+    def decode_testing(self, encoder_output, gold_bottom_up):
+        batch_size, edu_size, hidden_size = encoder_output.shape
+        state, trees = self.get_initial_state(gold_bottom_up)
+        for idx in range(batch_size):
+            self.index_output[idx]=[]
+        
+        all_nuclear_relation_output = []
+        while self.not_finished(trees):
+            hidden_state1, merge_mask = self.prepare_merge_for_testing(encoder_output, state)
+            merge_output, rnn_output = self.run_rnn_segmentation(hidden_state1, merge_mask) #output in cuda-2
+            state, trees = self.update_state(merge_output, merge_mask, trees)
+
+        return self.get_prediction(trees)
+
+    # Helper function
+    def get_initial_state(self, gold_bottom_up):
+        state_spans = [gold.state_spans for gold in gold_bottom_up]
+        trees = [gold.construct_new_copy() for gold in gold_bottom_up]
+        return state_spans, trees
+
+    # Helper function
+    def not_finished(self, trees):
+        for tree in trees:
+            if not tree.done:
+                return True
+        return False
+
+    # Helper function
+    def update_state(self, merge_output, merge_mask, trees):
+        new_trees = []
+        batch_size = merge_output.shape[0]
+        for idx in range(batch_size):
+            merge_out, mask, tree = merge_output[idx], merge_mask[idx], trees[idx]
+            if tree.done:
+                new_trees.append(tree)
+            else:
+                num_tokens = mask.sum()
+                merge_idx = self.select_merge(merge_out[:num_tokens-1]).item()
+                new_trees.append(tree.merge(merge_idx, "NUCLEAR SATELLITE", ""))
+        state_spans = [t.state_spans for t in new_trees]
+        return state_spans, new_trees
+    # End of testing -----------------------------------------------------------------------
+
+
+    # --------------------------------------------------------------------------------------
+    # Functions for training with static oracle (normal training) start from here
+    def prepare_merge_for_training(self, encoder_output, merge_batch, state_batch):
+        batch_size, edu_num, hidden = encoder_output.shape
+        stack_state = Variable(torch.zeros(batch_size, edu_num-1, edu_num, hidden)).type(torch.FloatTensor)
+        stack_mask = Variable(torch.zeros(batch_size, edu_num-1, edu_num)).type(torch.LongTensor)
+        stack_merge = Variable(torch.zeros(batch_size, edu_num-1, edu_num)).type(torch.FloatTensor)
+        @lru_cache(maxsize=None)
+        def encoder_output_lookup(idx, start, end):
+            return encoder_output[idx, start:end+1].mean(0)
+
+        for idx in range(batch_size):
+            merges, states = merge_batch[idx], state_batch[idx]
+            for idy in range(len(merges)):
+                merge, state_spans = merges[idy], states[idy]
+                encoder_state = []
+                for state_span in state_spans:
+                    start, end = state_span
+                    encoder_state.append(encoder_output_lookup(idx, start, end))
+                idz = len(state_spans)
+                stack_state[idx, idy, :idz] = torch.stack(encoder_state)
+                stack_mask[idx, idy, :idz] = 1
+                idz = len(merge)
+                stack_merge[idx, idy, :idz] = torch.FloatTensor(merge)
+
+        stack_num = batch_size * (edu_num - 1)
+        if self.config.use_gpu:
+            stack_state = stack_state.cuda()
+            stack_mask = stack_mask.cuda()
+            stack_merge = stack_merge.cuda()
+        return stack_state.view(stack_num, edu_num, -1), stack_mask.view(stack_num, -1), stack_merge.view(stack_num, -1)
+
+    def set_merge_prediction_for_training(self, segment_outputs, segment_masks):
+        batch_size, iters, edu_num = segment_outputs.shape
+        segment_masks = torch.sum(segment_masks, dim=-1)
+        assert iters == edu_num -1
+        
+        for idx in range(batch_size):
+            for idy in range(iters):
+                num_tokens = int(segment_masks[idx, idy].item())
+                if num_tokens == 0:
+                    continue
+                out = self.select_merge(segment_outputs[idx, idy, :num_tokens-1]).item()
+                self.index_output[idx].append(out)
+
+    def decode_training(self, encoder_output, gold_nuclear_relation, gold_bottom_up: List[GoldBottomUp], len_golds):
+        batch_size, edu_size, hidden_size = encoder_output.shape
+        merge_batch, state_batch = [], []
+        for idx in range(batch_size):
+            self.index_output[idx]=[]
+            merges, states = self.construct_merge_states(gold_bottom_up[idx])
+            merge_batch.append(merges)
+            state_batch.append(states)
+
+        all_hidden_states1, merge_masks, stack_merges = self.prepare_merge_for_training(encoder_output, merge_batch, state_batch)
+        merge_outputs, rnn_outputs = self.run_rnn_segmentation(all_hidden_states1, merge_masks)
+        self.set_merge_prediction_for_training(merge_outputs.view(batch_size, edu_size-1, -1), 
+                merge_masks.view(batch_size, edu_size-1, -1))
+        nuclear_relation = torch.zeros((batch_size, edu_size, 1))
+        if self.config.use_gpu:
+            nuclear_relation = nuclear_relation.cuda()
+        return self.compute_loss(merge_outputs, stack_merges, merge_masks, nuclear_relation, gold_nuclear_relation, len_golds)
+    # End of training with static oracle ---------------------------------------------------
+
+
+    # Primary function
+    def loss(self, subset_data, gold_subtrees, epoch=0):
+        self.epoch = epoch
+        words, tags, etypes, edu_mask, token_mask, word_mask, len_edus, token_denominator, word_denominator, syntax, \
+            gold_nuclear, gold_relation, gold_nuclear_relation, gold_segmentation, span, len_golds, depth, gold_bottom_up = subset_data
+        encoder_output = self.forward_all(words, tags, etypes, edu_mask, token_mask, word_mask, token_denominator, word_denominator, syntax)
+        if self.training:
+            if self.config.flag_oracle:
+                raise NotImplementedError("Dynamic oracle not implemented for bottom up parser")
+            else:
+                cost = self.decode_training(encoder_output, gold_nuclear_relation, gold_bottom_up, len_golds)
+            return cost, cost.item()
+        else:
+            if self.config.beam_search == 1:
+                gs, results = self.decode_testing(encoder_output, gold_bottom_up)
             else: #do beam search
                 # not supported yet
                 raise NotImplementedError('Beam search has not been implemented')

@@ -20,7 +20,7 @@ from in_out.preprocess import batch_data_variable
 from models.metric import Metric
 from models.vocab import Vocab
 from models.config import Config
-from models.architecture import MainArchitecture
+from models.architecture import TopDownArchitecture, BottomUpArchitecture
 from models.transformers import get_model_tokenizer
 from modules.embedding import ContextualEmbedding
 from modules.tokenizer import Tokenizer
@@ -104,6 +104,7 @@ def predict(network, instances, vocab, config, logger):
 def main():
     start_a = time.time()
     args_parser = argparse.ArgumentParser()
+    args_parser.add_argument('architecture', choices=['bottom-up', 'top-down'])
     args_parser.add_argument('--merge_order', default='left-only', choices=['left-only', 'left-first', 'random'])
     args_parser.add_argument('--word_embedding', default='glove', help='Embedding for words')
     args_parser.add_argument('--word_embedding_file', default=main_path+'Data/NeuralRST/glove.6B.200d.txt.gz')
@@ -223,7 +224,10 @@ def main():
         word_tokenizer.tokenize(test_instances)
 
     torch.set_num_threads(4)
-    network = MainArchitecture(vocab, config, word_embedd, tag_embedd, etype_embedd) 
+    if args.architecture == 'top-down':
+        network = TopDownArchitecture(vocab, config, word_embedd, tag_embedd, etype_embedd) 
+    elif args.architecture == 'bottom-up':
+        network = BottomUpArchitecture(vocab, config, word_embedd, tag_embedd, etype_embedd) 
    
     if config.freeze:
         network.word_embedd.freeze()
