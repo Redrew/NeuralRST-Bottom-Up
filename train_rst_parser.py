@@ -20,7 +20,6 @@ from in_out.preprocess import batch_data_variable
 from models.metric import Metric
 from models.vocab import Vocab
 from models.config import get_config
-from models.architecture import TopDownArchitecture, BottomUpArchitecture
 from models.transformers import get_model_tokenizer
 from modules.embedding import ContextualEmbedding
 from modules.tokenizer import Tokenizer
@@ -228,10 +227,7 @@ def main():
         word_tokenizer.tokenize(test_instances)
 
     torch.set_num_threads(4)
-    if config.architecture == 'top-down':
-        network = TopDownArchitecture(vocab, config, word_embedd, tag_embedd, etype_embedd) 
-    elif config.architecture == 'bottom-up':
-        network = BottomUpArchitecture(vocab, config, word_embedd, tag_embedd, etype_embedd) 
+    network = config.architecture_class(vocab, config, word_embedd, tag_embedd, etype_embedd) 
    
     if config.freeze:
         network.word_embedd.freeze()

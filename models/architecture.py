@@ -1,4 +1,4 @@
-__author__ = 'fajri'
+__author__ = 'Fajri Koto and Andrew Shen'
 
 import copy, math
 import operator
@@ -13,9 +13,9 @@ from modules.layer import *
 from typing import List
 from functools import lru_cache
 
-class TopDownArchitecture(nn.Module):
+class BaseArchitecture(nn.Module):
     def __init__(self, vocab, config, word_embedd, tag_embedd, etype_embedd):
-        super(TopDownArchitecture, self).__init__()
+        super(BaseArchitecture, self).__init__()
         
         self.word_embedd = word_embedd
         self.tag_embedd = tag_embedd
@@ -159,7 +159,9 @@ class TopDownArchitecture(nn.Module):
                 
                 if nuclear_relation_idx[idx, idy].item() == gold_nuclear_relation[idx, idy].item():
                     self.metric_nuclear_relation.correct_label_count += 1
-        
+
+
+class TopDownArchitecture(BaseArchitecture):
     def get_prediction(self, all_nuclear_relation_output):
         batch_size, _, _ = all_nuclear_relation_output.shape
         _, nuclear_relation_idx = torch.max(all_nuclear_relation_output, 2)
@@ -691,7 +693,7 @@ class SelectMerge:
         else:
             return valid_merge.nonzero()[0]
 
-class BottomUpArchitecture(TopDownArchitecture):
+class BottomUpArchitecture(BaseArchitecture):
     def __init__(self, vocab, config, word_embedd, tag_embedd, etype_embedd):
         super(BottomUpArchitecture, self).__init__(vocab, config, word_embedd, tag_embedd, etype_embedd)
 
@@ -951,3 +953,11 @@ class BottomUpArchitecture(TopDownArchitecture):
                 raise NotImplementedError('Beam search has not been implemented')
             return gs, results
             
+
+def get_architecture_class(architecture: str) -> BaseArchitecture:
+    if architecture == 'top-down':
+        return TopDownArchitecture
+    elif architecture == 'bottom-up':
+        return BottomUpArchitecture
+    else:
+        raise NotImplementedError(f'Architecture {architecture} is not implemented')
