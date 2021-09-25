@@ -205,7 +205,11 @@ class GoldBottomUp:
         self.merges = merges
         self.gold_tree = gold_tree
         merges = merges or []
-        self.merge_spans = [merge.edu_span for merge in merges]
+        self.merge_spans = []
+        self.merge_nuclear_relations = []
+        for merge in merges:
+            self.merge_spans.append(merge.edu_span)
+            self.merge_nuclear_relations.append(merge.nuclear + ' - ' + merge.relation)
         self.merge_mask = [0] * len(self.state_spans)
         for subtree in merges:
             idx = self.state_spans.index(subtree.left.edu_span)
