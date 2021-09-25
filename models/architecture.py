@@ -664,7 +664,7 @@ def construct_random_subtrees(gold: GoldBottomUp, vocab):
         state_spans.append(gold.state_spans)
         idx = np.random.randint(len(gold.merges))
         merge = gold.merges[idx]
-        nuclear_relation = vocab.relation_alpha.word2id(gold.nuclear_relation[idx])
+        nuclear_relation = vocab.nuclear_relation_alpha.word2id(gold.merge_nuclear_relations[idx])
         merge_idx = gold.state_spans.index(merge.left.edu_span)
         merge_idxs.append(merge_idx)
         nuclear_relations.append(nuclear_relation)
