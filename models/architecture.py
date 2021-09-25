@@ -680,31 +680,41 @@ def single_merge(merge_masks, merge_idxs):
         target_merges[idx][merge] = 1
     return target_merges
 
-def select_left_first_valid_merge(merge_out):
-    valid_merge = merge_out > 0.5
-    if not torch.any(valid_merge):
-        return torch.argmax(merge_out)
-    else:
-        return valid_merge.nonzero()[0]
+class SelectMerge:
+    def __init__(self, threshold):
+        self.threshold = threshold
+
+    def __call__(self, merge_out):
+        valid_merge = merge_out > self.threshold
+        if not torch.any(valid_merge):
+            return torch.argmax(merge_out)
+        else:
+            return valid_merge.nonzero()[0]
 
 class BottomUpArchitecture(TopDownArchitecture):
     def __init__(self, vocab, config, word_embedd, tag_embedd, etype_embedd):
         super(BottomUpArchitecture, self).__init__(vocab, config, word_embedd, tag_embedd, etype_embedd)
 
-        if config.merge_order == 'left-only':
+        if config.subtree_order_for_training == 'left':
             self.construct_merge_states = construct_left_subtrees
-            self.get_target_merges = single_merge
-            self.select_merge = torch.argmax
-        elif config.merge_order == 'left-first':
-            self.construct_merge_states = construct_left_subtrees
-            self.get_target_merges = all_merges
-            self.select_merge = select_left_first_valid_merge
-        elif config.merge_order == 'random':
+        elif config.subtree_order_for_training == 'random':
             self.construct_merge_states = construct_random_subtrees
-            self.get_target_merges = all_merges
-            self.select_merge = torch.argmax
         else:
-            raise NotImplementedError('Merge order is not supported')
+            raise NotImplementedError(f'Subtree order {config.subtree_order_for_training} is not implemented')
+
+        if config.target_merges == 'all':
+            self.get_target_merges = all_merges
+        elif config.target_merges == 'single':
+            self.get_target_merges = single_merge
+        else:
+            raise NotImplementedError(f'Target merge {config.target_merges} is not implemented')
+
+        if config.merge_selection_for_inference == 'max':
+            self.select_merge = torch.argmax
+        elif config.merge_selection_for_inference == 'threshold':
+            self.select_merge = SelectMerge(config.merge_selection_threshold)
+        else:
+            raise NotImplementedError(f'Inference merge {config.merge_selection_for_inference} is not implemented')
 
     def get_prediction(self, bottom_up_trees):
         gs = [Gold(bu.get_tree()) for bu in bottom_up_trees]

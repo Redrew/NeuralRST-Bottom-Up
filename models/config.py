@@ -7,8 +7,8 @@ class Config(object):
     def __init__(self, args):
         if args is None:
             return
+        self.architecture = args.architecture
         self.use_gpu = torch.cuda.is_available()
-        self.merge_order = args.merge_order
         self.use_dynamic_oracle = args.use_dynamic_oracle == 1
         self.flag_oracle = False
         self.word_embedding = args.word_embedding
@@ -73,7 +73,6 @@ class Config(object):
     def save(self):
         f = open(self.model_path + '/config.cfg', 'w')
         f.write("use_gpu = " + str(self.use_gpu) + '\n')
-        f.write("merge_order = " + str(self.merge_order) + '\n')
         f.write("use_dynamic_oracle = "+ str(self.use_dynamic_oracle) + '\n')
         f.write("flag_oracle = " + str(self.flag_oracle) + '\n')
         f.write("word_embedding = " + str(self.word_embedding) + '\n')
@@ -136,7 +135,6 @@ class Config(object):
     def load_config(self, path):
         f = open(path, 'r')
         self.use_gpu = f.readline().strip().split(' = ')[-1] == 'True'
-        self.merge_order = f.readline().strip().split(' = ')[-1]
         self.use_dynamic_oracle = f.readline().strip().split(' = ')[-1] == 'True'
         self.flag_oracle = f.readline().strip().split(' = ')[-1] == 'True'
         self.word_embedding = f.readline().strip().split(' = ')[-1] 
@@ -199,3 +197,43 @@ class Config(object):
         
         self.static_word_embedding = self.word_embedding in STATIC_EMBEDDINGS
         self.contextual_word_embedding = not self.static_word_embedding
+
+
+class TopDownConfig(Config):
+    pass
+
+
+class BottomUpConfig(Config):
+    def __init__(self, args):
+        super().__init__(args)
+        self.subtree_order_for_training = args.subtree_order
+        self.target_merges = args.target_merges
+        if args.merge_inference.split('-')[0] == 'threshold':
+            self.merge_selection_for_inference, threshold = args.merge_inference.split('-')
+            self.merge_selection_threshold = int(threshold) / 100
+        else:
+            self.merge_selection_for_inference = args.merge_inference
+            self.merge_selection_threshold = 1
+
+    def dump(self, file_object):
+        super().dump(file_object)
+        file_object.write("subtree_order = " + self.subtree_order_for_training + '\n')
+        file_object.write("target_merges = " + self.target_merges + '\n')
+        file_object.write("merge_selection_for_inference = " + self.merge_selection_for_inference + '\n')
+        file_object.write("merge_selection_threshold = " + str(self.merge_selection_threshold) + '\n')
+
+    def read(self, file_object):
+        super().read(file_object)
+        self.subtree_order = file_object.readline().strip().split(' = ')[-1]
+        self.target_merges = file_object.readline().strip().split(' = ')[-1]
+        self.merge_selection_for_inference = file_object.readline().strip().split(' = ')[-1]
+        self.merge_selection_threshold = file_object.readline().strip().split(' = ')[-1]
+
+
+def get_config(args):
+    if args.architecture == 'top-down':
+        return TopDownConfig(args)
+    elif args.architecture == 'bottom-up':
+        return BottomUpConfig(args)
+    else:
+        raise NotImplementedError(f'Architecture {args.architecture} is not implemented')

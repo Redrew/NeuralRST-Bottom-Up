@@ -19,7 +19,7 @@ from in_out.preprocess import validate_gold_actions, validate_gold_top_down
 from in_out.preprocess import batch_data_variable
 from models.metric import Metric
 from models.vocab import Vocab
-from models.config import Config
+from models.config import get_config
 from models.architecture import TopDownArchitecture, BottomUpArchitecture
 from models.transformers import get_model_tokenizer
 from modules.embedding import ContextualEmbedding
@@ -105,7 +105,11 @@ def main():
     start_a = time.time()
     args_parser = argparse.ArgumentParser()
     args_parser.add_argument('architecture', choices=['bottom-up', 'top-down'])
-    args_parser.add_argument('--merge_order', default='left-only', choices=['left-only', 'left-first', 'random'])
+    # Bottom Up arguments
+    args_parser.add_argument('--subtree_order', default='left', choices=['left', 'random'])
+    args_parser.add_argument('--target_merges', default='single', choices=['single', 'all'])
+    args_parser.add_argument('--merge_inference', default='max', help='{max, threshold-XXX}')
+    # General arguments
     args_parser.add_argument('--word_embedding', default='glove', help='Embedding for words')
     args_parser.add_argument('--word_embedding_file', default=main_path+'Data/NeuralRST/glove.6B.200d.txt.gz')
     args_parser.add_argument('--train', default=main_path+'Data/NeuralRST/rst.train312')  
@@ -165,7 +169,7 @@ def main():
     args_parser.add_argument('--seed', type=int, default=999, help='random seed')
 
     args = args_parser.parse_args()
-    config = Config(args)
+    config = get_config(args)
 
     random.seed(config.seed)
     torch.manual_seed(config.seed)
@@ -224,9 +228,9 @@ def main():
         word_tokenizer.tokenize(test_instances)
 
     torch.set_num_threads(4)
-    if args.architecture == 'top-down':
+    if config.architecture == 'top-down':
         network = TopDownArchitecture(vocab, config, word_embedd, tag_embedd, etype_embedd) 
-    elif args.architecture == 'bottom-up':
+    elif config.architecture == 'bottom-up':
         network = BottomUpArchitecture(vocab, config, word_embedd, tag_embedd, etype_embedd) 
    
     if config.freeze:
