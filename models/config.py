@@ -227,7 +227,7 @@ class BottomUpConfig(Config):
         self.subtree_order = file_object.readline().strip().split(' = ')[-1]
         self.target_merges = file_object.readline().strip().split(' = ')[-1]
         self.merge_selection_for_inference = file_object.readline().strip().split(' = ')[-1]
-        self.merge_selection_threshold = file_object.readline().strip().split(' = ')[-1]
+        self.merge_selection_threshold = float(file_object.readline().strip().split(' = ')[-1])
 
 
 def get_config(args):
