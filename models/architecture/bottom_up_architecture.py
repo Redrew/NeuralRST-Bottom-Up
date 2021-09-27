@@ -12,86 +12,76 @@ from modules.layer import *
 from typing import List
 from functools import lru_cache
 
-def construct_left_subtrees(gold: GoldBottomUp, vocab):
-    merge_masks = []
-    state_spans = []
-    merge_idxs = []
-    nuclear_relations = []
-    while gold.merges:
-        merge_mask = gold.merge_mask.copy()
-        merge_masks.append(merge_mask)
-        state_spans.append(gold.state_spans)
-        idx = 0
-        merge = gold.merges[idx]
-        nuclear_relation = vocab.nuclear_relation_alpha.word2id(gold.merge_nuclear_relations[idx])
-        merge_idx = gold.state_spans.index(merge.left.edu_span)
-        merge_idxs.append(merge_idx)
-        nuclear_relations.append(nuclear_relation)
-        gold = gold.merge(merge, "", "")
-    return merge_masks, state_spans, merge_idxs, nuclear_relations
+class SubtreeOrder:
+    def __init__(self, option, vocab):
+        if option not in ['left', 'random']:
+            raise NotImplementedError(f'Subtree order {option} is not implemented')
+        self.option = option
+        self.vocab = vocab
 
-def construct_random_subtrees(gold: GoldBottomUp, vocab):
-    merge_masks = []
-    state_spans = []
-    merge_idxs = []
-    nuclear_relations = []
-    while gold.merges:
-        merge_mask = gold.merge_mask.copy()
-        merge_masks.append(merge_mask)
-        state_spans.append(gold.state_spans)
-        idx = np.random.randint(len(gold.merges))
-        merge = gold.merges[idx]
-        nuclear_relation = vocab.nuclear_relation_alpha.word2id(gold.merge_nuclear_relations[idx])
-        merge_idx = gold.state_spans.index(merge.left.edu_span)
-        merge_idxs.append(merge_idx)
-        nuclear_relations.append(nuclear_relation)
-        gold = gold.merge(merge, "", "")
-    return merge_masks, state_spans, merge_idxs, nuclear_relations
+    def __call__(self, gold: GoldBottomUp):
+        merge_masks = []
+        state_spans = []
+        merge_idxs = []
+        nuclear_relations = []
+        while gold.merges:
+            merge_mask = gold.merge_mask.copy()
+            merge_masks.append(merge_mask)
+            state_spans.append(gold.state_spans)
+            idx = self._select_idx(len(gold.merges))
+            merge = gold.merges[idx]
+            nuclear_relation = self.vocab.nuclear_relation_alpha.word2id(gold.merge_nuclear_relations[idx])
+            merge_idx = gold.state_spans.index(merge.left.edu_span)
+            merge_idxs.append(merge_idx)
+            nuclear_relations.append(nuclear_relation)
+            gold = gold.merge(merge, "", "")
+        return merge_masks, state_spans, merge_idxs, nuclear_relations
 
-def all_merges(merge_masks, merge_idxs):
-    return merge_masks
+    def _select_idx(self, n):
+        if self.option == 'left':
+            return 0
+        elif self.option == 'random':
+            return np.random.randint(n)
 
-def single_merge(merge_masks, merge_idxs):
-    target_merges = [[0 for _ in merge_mask] for merge_mask in merge_masks]
-    for idx, merge in enumerate(merge_idxs):
-        target_merges[idx][merge] = 1
-    return target_merges
+class TargetMerge:
+    def __init__(self, option):
+        if option not in ['all', 'single']:
+            raise NotImplementedError(f'Target merge {option} is not implemented')
+        self.option = option
+
+    def __call__(self, merge_masks, merge_idxs):
+        if self.option == 'all':
+            return merge_masks
+        elif self.option == 'single':
+            target_merges = [[0 for _ in merge_mask] for merge_mask in merge_masks]
+            for idx, merge in enumerate(merge_idxs):
+                target_merges[idx][merge] = 1
+            return target_merges
 
 class SelectMerge:
-    def __init__(self, threshold):
+    def __init__(self, option, threshold=1):
+        if option not in ['max', 'threshold']:
+            raise NotImplementedError(f'Merge inference {option} is not implemented')
+        self.option = option
         self.threshold = threshold
 
     def __call__(self, merge_out):
-        valid_merge = merge_out > self.threshold
-        if not torch.any(valid_merge):
+        if self.option == 'max':
             return torch.argmax(merge_out)
-        else:
-            return valid_merge.nonzero()[0]
+        elif self.option == 'threshold':
+            valid_merge = merge_out > self.threshold
+            if not torch.any(valid_merge):
+                return torch.argmax(merge_out)
+            else:
+                return valid_merge.nonzero()[0]
 
 class BottomUpArchitecture(BaseArchitecture):
     def __init__(self, vocab, config, word_embedd, tag_embedd, etype_embedd):
         super(BottomUpArchitecture, self).__init__(vocab, config, word_embedd, tag_embedd, etype_embedd)
 
-        if config.subtree_order_for_training == 'left':
-            self.construct_merge_states = construct_left_subtrees
-        elif config.subtree_order_for_training == 'random':
-            self.construct_merge_states = construct_random_subtrees
-        else:
-            raise NotImplementedError(f'Subtree order {config.subtree_order_for_training} is not implemented')
-
-        if config.target_merges == 'all':
-            self.get_target_merges = all_merges
-        elif config.target_merges == 'single':
-            self.get_target_merges = single_merge
-        else:
-            raise NotImplementedError(f'Target merge {config.target_merges} is not implemented')
-
-        if config.merge_selection_for_inference == 'max':
-            self.select_merge = torch.argmax
-        elif config.merge_selection_for_inference == 'threshold':
-            self.select_merge = SelectMerge(config.merge_selection_threshold)
-        else:
-            raise NotImplementedError(f'Inference merge {config.merge_selection_for_inference} is not implemented')
+        self.construct_merge_states = SubtreeOrder(config.subtree_order_for_training, vocab)
+        self.get_target_merges = TargetMerge(config.target_merges)
+        self.select_merge = SelectMerge(config.merge_selection_for_inference, config.merge_selection_threshold)
 
     def get_prediction(self, bottom_up_trees):
         gs = [Gold(bu.get_tree()) for bu in bottom_up_trees]
@@ -288,7 +278,7 @@ class BottomUpArchitecture(BaseArchitecture):
         gold_nuclear_relation = Variable(torch.ones(batch_size, edu_size-1).type(torch.LongTensor) * self.vocab.nuclear_relation_alpha.size(), requires_grad=False)
         for idx in range(batch_size):
             self.index_output[idx] = []
-            merge_masks, states, merge_idxs, nuclear_relations = self.construct_merge_states(gold_bottom_up[idx], self.vocab)
+            merge_masks, states, merge_idxs, nuclear_relations = self.construct_merge_states(gold_bottom_up[idx])
             merges = self.get_target_merges(merge_masks, merge_idxs)
             target_merge_batch.append(merges)
             state_batch.append(states)
