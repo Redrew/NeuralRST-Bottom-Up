@@ -49,8 +49,11 @@ def evaluate_train_data(network, train_instances, vocab, config, logger):
 def main():
     args_parser = argparse.ArgumentParser()
     args_parser.add_argument('config_path')
+    args_parser.add_argument('--merge_inference', default=None)
     args = args_parser.parse_args()
     config = load_config(args.config_path)
+    if args.merge_inference is not None:
+        config.set_merge_selection_for_inference(args.merge_inference)
     
     logger = get_logger("RSTParser (Top-Down) RUN", config.use_dynamic_oracle, config.model_path)
     word_alpha, tag_alpha, gold_action_alpha, action_label_alpha, relation_alpha, nuclear_alpha, nuclear_relation_alpha, etype_alpha = create_alphabet(None, config.alphabet_path, logger)

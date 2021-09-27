@@ -226,11 +226,14 @@ class BottomUpConfig(Config):
             return
         self.subtree_order_for_training = args.subtree_order
         self.target_merges = args.target_merges
-        if args.merge_inference.split('-')[0] == 'threshold':
-            self.merge_selection_for_inference, threshold = args.merge_inference.split('-')
+        self.set_merge_selection_for_inference(args.merge_inference)
+
+    def set_merge_selection_for_inference(self, merge_inference):
+        if merge_inference.split('-')[0] == 'threshold':
+            self.merge_selection_for_inference, threshold = merge_inference.split('-')
             self.merge_selection_threshold = int(threshold) / 100
         else:
-            self.merge_selection_for_inference = args.merge_inference
+            self.merge_selection_for_inference = merge_inference
             self.merge_selection_threshold = 1
 
     def dump(self, file_object):
