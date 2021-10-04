@@ -34,7 +34,7 @@ class BaseArchitecture(nn.Module):
         out_dim1 = config.hidden_size * 2
         out_dim2 = config.hidden_size * 2
         
-        self.rnn_segmentation = MyLSTM(input_size=out_dim2, hidden_size=config.hidden_size_tagger, num_layers=config.num_layers, batch_first=True, bidirectional=True, dropout_in=config.drop_prob, dropout_out=config.drop_prob)
+        self.rnn_span = MyLSTM(input_size=out_dim2, hidden_size=config.hidden_size_tagger, num_layers=config.num_layers, batch_first=True, bidirectional=True, dropout_in=config.drop_prob, dropout_out=config.drop_prob)
         self.mlp_seg = NonLinear(config.hidden_size_tagger * 2, config.hidden_size_tagger/2, activation=nn.Tanh())
         
         self.mlp_nuclear_relation = NonLinear(config.hidden_size_tagger * 4, config.hidden_size, activation=nn.Tanh())
@@ -116,16 +116,16 @@ class BaseArchitecture(nn.Module):
         # output = self.dropout_out(output)
         return output
 
-    def run_rnn_segmentation(self, segmented_encoder, segment_mask):
-        batch_size, edu_size, hidden_size = segmented_encoder.shape
-        output, hn = self.rnn_segmentation(segmented_encoder, segment_mask, None)
+    def run_rnn_span(self, encoding, span_mask):
+        batch_size, edu_size, hidden_size = encoding.shape
+        output, hn = self.rnn_span(encoding, span_mask, None)
         output = output.transpose(0,1).contiguous()
         output = self.dropout_out(output)
         
         sent_scores = torch.sum(self.mlp_seg(output), dim=-1).view(batch_size, edu_size)
         sent_scores = torch.sigmoid(sent_scores)
-        sent_scores = sent_scores.clone() * segment_mask
-        return sent_scores, output * segment_mask.unsqueeze(2)
+        sent_scores = sent_scores.clone() * span_mask
+        return sent_scores, output * span_mask.unsqueeze(2)
 
     def forward_all(self, input_word, input_tag, input_etype, edu_mask, token_mask, word_mask, token_denominator, word_denominator, syntax):
         if self.static_embedd:

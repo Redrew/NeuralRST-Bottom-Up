@@ -207,7 +207,7 @@ class TopDownArchitecture(BaseArchitecture):
         while (self.not_finished(span_initial, batch_size)):
             hidden_state1, segment_mask = self.prepare_segmentation_for_testing(encoder_output, span_initial)
             
-            segment_output, rnn_output = self.run_rnn_segmentation(hidden_state1, segment_mask) #output in cuda-2
+            segment_output, rnn_output = self.run_rnn_span(hidden_state1, segment_mask) #output in cuda-2
             cur_span_pairs, span_initial = self.update_span(segment_output, segment_mask, span_initial)
 
             hidden_state2 = self.prepare_prediction_for_testing(rnn_output, cur_span_pairs)
@@ -326,7 +326,7 @@ class TopDownArchitecture(BaseArchitecture):
             self.index_output[idx]=[]
         
         all_hidden_states1, segment_masks = self.prepare_segmentation_for_training(encoder_output, span)
-        segment_outputs, rnn_outputs = self.run_rnn_segmentation(all_hidden_states1, segment_masks)
+        segment_outputs, rnn_outputs = self.run_rnn_span(all_hidden_states1, segment_masks)
         
         all_hidden_states2 = self.prepare_prediction_for_training(rnn_outputs, segment_masks, gold_segmentation)
         nuclear_relation_outputs = self.output_nuclear_relation(self.mlp_nuclear_relation(all_hidden_states2))
@@ -437,7 +437,7 @@ class TopDownArchitecture(BaseArchitecture):
             hidden_state1, segment_mask = self.prepare_segmentation_for_testing(encoder_output, span_initial)
             oracle_gold_segmentation, oracle_gold_nuclear_relation = self.get_oracle_gold(span_initial, span, gold_segmentation, gold_nuclear_relation, oracle_attr)
             
-            segment_output, rnn_output = self.run_rnn_segmentation(hidden_state1, segment_mask) #output in cuda-2
+            segment_output, rnn_output = self.run_rnn_span(hidden_state1, segment_mask) #output in cuda-2
             cur_span_pairs, span_initial = self.update_span_oracle(segment_output, segment_mask, span_initial, oracle_gold_segmentation)
 
             hidden_state2 = self.prepare_prediction_for_testing(rnn_output, cur_span_pairs)

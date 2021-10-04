@@ -34,17 +34,16 @@ class SubtreeGenerator:
         state_spans = []
         merge_idxs = []
         nuclear_relations = []
-        while gold.merges:
+        while not gold.done:
             merge_mask = gold.merge_mask.copy()
             merge_masks.append(merge_mask)
             state_spans.append(gold.state_spans)
-            idx = self.merge_order.select(range(len(gold.merges)))
-            merge = gold.merges[idx]
-            nuclear_relation = self.vocab.nuclear_relation_alpha.word2id(gold.merge_nuclear_relations[idx])
-            merge_idx = gold.state_spans.index(merge.left.edu_span)
+            merge_idx = self.merge_order.select(gold.merge_idxs)
+            nuclear_relation = gold.nuclear_relation[merge_idx]
+            nuclear_relation = self.vocab.nuclear_relation_alpha.word2id(nuclear_relation)
             merge_idxs.append(merge_idx)
             nuclear_relations.append(nuclear_relation)
-            gold = gold.merge(merge, "", "")
+            gold = gold.merge(merge_idx, "", "")
         return merge_masks, state_spans, merge_idxs, nuclear_relations
 
 class TargetMerge:
@@ -168,7 +167,7 @@ class BottomUpArchitecture(BaseArchitecture):
         
         while self.not_finished(trees):
             hidden_state1, merge_mask = self.prepare_merge_for_testing(encoder_output, state)
-            merge_output, rnn_output = self.run_rnn_segmentation(hidden_state1, merge_mask) #output in cuda-2
+            merge_output, rnn_output = self.run_rnn_span(hidden_state1, merge_mask) #output in cuda-2
             merges = self.select_merges(merge_output, merge_mask, trees)
             hidden_state2 = self.prepare_prediction_for_testing(rnn_output, merges)
             nuclear_relation_output = self.output_nuclear_relation(self.mlp_nuclear_relation(hidden_state2))
@@ -298,7 +297,7 @@ class BottomUpArchitecture(BaseArchitecture):
             gold_nuclear_relation = gold_nuclear_relation.cuda()
 
         all_hidden_states1, merge_masks, stack_merges = self.prepare_merge_for_training(encoder_output, target_merge_batch, state_batch)
-        merge_outputs, rnn_outputs = self.run_rnn_segmentation(all_hidden_states1, merge_masks)
+        merge_outputs, rnn_outputs = self.run_rnn_span(all_hidden_states1, merge_masks)
         self.set_merge_prediction_for_training(merge_outputs.view(batch_size, edu_size-1, -1), 
                 merge_masks.view(batch_size, edu_size-1, -1))
         all_hidden_states2 = self.prepare_prediction_for_training(rnn_outputs, merge_idx_batch)
