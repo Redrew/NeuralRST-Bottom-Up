@@ -225,11 +225,11 @@ class BottomUpForest:
 
 # GoldBottomUp represents Bottom-Up Parser attributes
 class GoldBottomUp(BottomUpForest):
-    def __init__(self, state, merges, gold_tree):
+    def __init__(self, state, merges, depths, gold_tree):
         super().__init__(state)
         self.merges = merges
+        self.depths = depths
         self.gold_tree = gold_tree
-        merges = merges or []
         self.merge_spans = []
         self.merge_nuclear_relations = []
         for merge in merges:
@@ -245,30 +245,36 @@ class GoldBottomUp(BottomUpForest):
 
     @staticmethod
     def from_tree(tree):
+        if tree is None:
+            return GoldBottomUp([], [], [], None)
+
         merge_set = set()
-        queue = []
-        if tree is not None:
-            queue.append(tree)
+        depths = []
+        state = []
+        queue = [(0, tree)]
         while queue:
-            t = queue.pop()
+            d, t = queue.pop()
             if t.left is not None or t.right is not None:
                 merge_set.add(t)
                 if t.parent and t.parent in merge_set:
                     merge_set.remove(t.parent)
             if t.left is not None:
-                queue.append(t.left)
+                queue.append((d + 1, t.left))
             if t.right is not None:
-                queue.append(t.right)
+                queue.append((d + 1, t.right))
+            else:
+                depths.append(d)
+                state.append(t)
         merges = sorted(merge_set, key=subtree_cmp_key)
-        num_edus = 0 if tree is None else tree.edu_span[1] + 1
-        state = [Tree((idx, idx), "", "") for idx in range(num_edus)]
+        num_edus = tree.edu_span[1] + 1
 
-        return GoldBottomUp(state, merges, tree)
+        return GoldBottomUp(state, merges, depths, tree)
 
     def merge(self, merge_node, nuclear, relation):
         state = self.state.copy()
-
         merges = self.merges.copy()
+        depths = self.depths.copy()
+
         if isinstance(merge_node, int):
             merge_node = self.merges[merge_node]
         assert merge_node in self.merges
@@ -280,24 +286,13 @@ class GoldBottomUp(BottomUpForest):
 
         # Update merges
         merges.remove(merge_node)
-        mergeable = [False] * self.span_len
-        for merge in merges:
-            start, end = merge.edu_span
-            for idx in range(start, end+1):
-                mergeable[idx] = True
-        def in_merges(tree):
-            start, end = tree.edu_span
-            for idx in range(start, end+1):
-                if mergeable[idx]:
-                    return True
-            return False
         if merge_node.parent:
             parent = merge_node.parent
             if parent.left == merge_node:
                 sibling = parent.right
             else:
                 sibling = parent.left
-            if not in_merges(sibling):
+            if sibling.edu_span in self.state_spans:
                 merges.append(parent)
                 merges.sort(key=subtree_cmp_key)
 
@@ -305,7 +300,9 @@ class GoldBottomUp(BottomUpForest):
         new_state_node.left = state[merge_idx]
         new_state_node.right = state[merge_idx+1]
         state = state[:merge_idx] + [new_state_node] + state[merge_idx+2:]
-        return GoldBottomUp(state, merges, self.gold_tree)
+        node_depth = depth[merge_idx] - 1
+        depth = depth[:merge_idx] + [node_depth] + depth[merge_idx+2:]
+        return GoldBottomUp(state, merges, depth, self.gold_tree)
  
 
 # A single EDU representation
