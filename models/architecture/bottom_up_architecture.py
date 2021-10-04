@@ -179,7 +179,7 @@ class BottomUpArchitecture(BaseArchitecture):
     # Helper function
     def get_initial_state(self, gold_bottom_up):
         state_spans = [gold.state_spans for gold in gold_bottom_up]
-        trees = [gold.construct_new_copy() for gold in gold_bottom_up]
+        trees = [gold.make_initial_forest() for gold in gold_bottom_up]
         return state_spans, trees
 
     # Helper function
