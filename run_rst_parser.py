@@ -70,12 +70,6 @@ def main():
         network = network.cuda()
     network.eval()
     
-    # network.training = True
-    # logger.info("Reading Train, and predict...")
-    # reader = Reader(config.train_path, config.train_syn_feat_path)
-    # train_instances  = reader.read_data()
-    # evaluate_train_data(network, train_instances, vocab, config, logger)
-
     network.training = False
 
     network.metric_span.reset()
