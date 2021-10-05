@@ -200,7 +200,7 @@ class BottomUpForest:
         self.state = state
         self.state_spans = [t.edu_span for t in state]
         self.span_len = state[-1].edu_span[1] + 1 if state else 0
-        self.done = len(state) == 1
+        self.done = len(state) <= 1
 
     @staticmethod
     def make_initial_forest(num_edus):
