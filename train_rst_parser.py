@@ -171,6 +171,7 @@ def main():
     config = get_config(args)
 
     random.seed(config.seed)
+    np.random.seed(config.seed)
     torch.manual_seed(config.seed)
     if config.use_gpu:
         torch.cuda.manual_seed_all(config.seed)
