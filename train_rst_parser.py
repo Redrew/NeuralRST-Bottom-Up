@@ -334,7 +334,7 @@ def main():
         span, nuclear, relation, full, span_ori, nuclear_ori, relation_ori, full_ori =\
                 predict(network, dev_instances, vocab, config, logger)
         
-        if best_F < full.get_f_measure():
+        if best_F_ori < full_ori.get_f_measure():
             best_S = span.get_f_measure(); best_S_ori = span_ori.get_f_measure()
             best_N = nuclear.get_f_measure(); best_N_ori = nuclear_ori.get_f_measure()
             best_R = relation.get_f_measure(); best_R_ori = relation_ori.get_f_measure()
@@ -346,9 +346,9 @@ def main():
             logger.info('Model is successfully saved')
             es_counter = 0
         else:
-            logger.info("NOT exceed best Full F-score: history = %.2f, current = %.2f" % (best_F, full.get_f_measure()))
-            logger.info("Best dev performance in Iteration %d with result S (rst): %.4f, N (rst): %.4f, R (rst): %.4f, F (rst): %.4f" %(iteration, best_S, best_N, best_R, best_F))
-            #logger.info("Best dev performance in Iteration %d with result S (ori): %.4f, N (ori): %.4f, R (ori): %.4f, F (ori): %.4f" %(iteration, best_S_ori, best_N_ori, best_R_ori, best_F_ori))
+            logger.info("NOT exceed best Full F-score: history = %.2f, current = %.2f" % (best_F_ori, full_ori.get_f_measure()))
+            # logger.info("Best dev performance in Iteration %d with result S (rst): %.4f, N (rst): %.4f, R (rst): %.4f, F (rst): %.4f" %(iteration, best_S, best_N, best_R, best_F))
+            logger.info("Best dev performance in Iteration %d with result S (ori): %.4f, N (ori): %.4f, R (ori): %.4f, F (ori): %.4f" %(iteration, best_S_ori, best_N_ori, best_R_ori, best_F_ori))
             if es_counter > config.early_stopping:
                 logger.info('Early stopping after getting lower DEV performance in %d consecutive epoch. BYE, Assalamualaikum!' %(es_counter) )
                 sys.exit()
