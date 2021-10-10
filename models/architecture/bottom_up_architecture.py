@@ -99,7 +99,7 @@ class BottomUpArchitecture(BaseArchitecture):
         subtrees = [g.get_subtree() for g in gs]
         return gs, subtrees
 
-    def compute_loss(self, merge_outputs, stack_merges, merge_masks, nuclear_relation, gold_nuclear_relation, len_golds, depths):
+    def compute_loss(self, merge_outputs, target_merges, num_elems, merge_masks, nuclear_relation, gold_nuclear_relation, len_golds, depths):
         batch_size, nuc_len, nuc_num = nuclear_relation.shape
         idx_ignore_nuc = self.vocab.nuclear_relation_alpha.size()
         nuc_rel_loss = F.cross_entropy(nuclear_relation.view(batch_size * nuc_len, nuc_num),
@@ -113,14 +113,18 @@ class BottomUpArchitecture(BaseArchitecture):
             stack_mask = merge_masks[idx]
             if not torch.any(stack_mask):
                 continue
-            output, target = merge_outputs[idx, stack_mask], stack_merges[idx, stack_mask]
-            loss_multiplier = (depths[idx][stack_mask]**self.config.depth_alpha)
+            output, target = merge_outputs[idx, stack_mask], target_merges[idx, stack_mask]
+            loss_multiplier = 0
+            if self.config.depth_alpha != 0:
+                loss_multiplier += depths[idx][stack_mask]**self.config.depth_alpha
+            if self.config.elem_alpha != 0:
+                loss_multiplier += num_elems[idx][stack_mask] **self.config.elem_alpha
             if self.config.depth_alpha == 0 and self.config.elem_alpha == 0:
                 loss_multiplier = 1
             cur_loss = (loss_multiplier * F.binary_cross_entropy(output, target, reduction="none")).sum()
             seg_loss.append(cur_loss)
         seg_loss = sum(seg_loss) / merge_masks.sum()
-        gold_merges = stack_merges.view(batch_size, stack_size//batch_size, -1)
+        gold_merges = target_merges.view(batch_size, stack_size//batch_size, -1)
         self.update_eval_metric(gold_merges, nuclear_relation, gold_nuclear_relation, len_golds)
 
         if self.config.activate_seg_loss > 0 and self.config.activate_nuc_rel_loss > 0:
@@ -290,6 +294,7 @@ class BottomUpArchitecture(BaseArchitecture):
         batch_size, edu_size, hidden_size = encoder_output.shape
         target_merge_batch, state_batch, merge_idx_batch = [], [], []
         depth_batch = Variable(torch.zeros(batch_size, edu_size-1, edu_size).type(torch.LongTensor), requires_grad=False)
+        num_other_elems = Variable(torch.zeros(batch_size, edu_size-1, edu_size).type(torch.LongTensor), requires_grad=False)
         gold_nuclear_relation = Variable(torch.ones(batch_size, edu_size-1).type(torch.LongTensor) * self.vocab.nuclear_relation_alpha.size(), requires_grad=False)
         for idx in range(batch_size):
             self.index_output[idx] = []
@@ -298,24 +303,29 @@ class BottomUpArchitecture(BaseArchitecture):
             target_merge_batch.append(merges)
             state_batch.append(states)
             merge_idx_batch.append(merge_idxs)
-            state_len = len(depths)
-            for idy in range(state_len):
-                depth = depths[idy]
-                depth_batch[idx, idy, :len(depth)] = torch.tensor(depth)
-            gold_nuclear_relation[idx, :state_len] = torch.tensor(nuclear_relations)
+            num_states = len(states)
+            for idy in range(num_states):
+                num_merges = len(states[idy])
+                depth_batch[idx, idy, :num_merges] = torch.tensor(depths[idy])
+                num_edus = states[idy][-1][-1] + 1
+                elems_other = [num_edus - (r-l+1) for l, r in states[idy]]
+                num_other_elems[idx, idy, :num_merges] = torch.tensor(elems_other)
+            gold_nuclear_relation[idx, :num_states] = torch.tensor(nuclear_relations)
         if self.config.use_gpu:
             depth_batch = depth_batch.cuda()
             gold_nuclear_relation = gold_nuclear_relation.cuda()
+            num_other_elems = num_other_elems.cuda()
         depth_batch = depth_batch.view(batch_size * (edu_size-1), -1)
+        num_other_elems = num_other_elems.view(batch_size * (edu_size-1), -1)
 
-        all_hidden_states1, merge_masks, stack_merges = self.prepare_merge_for_training(encoder_output, target_merge_batch, state_batch)
+        all_hidden_states1, merge_masks, target_merges = self.prepare_merge_for_training(encoder_output, target_merge_batch, state_batch)
         merge_outputs, rnn_outputs = self.run_rnn_span(all_hidden_states1, merge_masks)
         self.set_merge_prediction_for_training(merge_outputs.view(batch_size, edu_size-1, -1), 
                 merge_masks.view(batch_size, edu_size-1, -1))
         all_hidden_states2 = self.prepare_prediction_for_training(rnn_outputs, merge_idx_batch)
         nuclear_relation_outputs = self.output_nuclear_relation(self.mlp_nuclear_relation(all_hidden_states2))
         nuclear_relation_outputs = nuclear_relation_outputs.view(batch_size, edu_size-1, -1)
-        return self.compute_loss(merge_outputs, stack_merges, merge_masks, nuclear_relation_outputs, gold_nuclear_relation, len_golds, depth_batch)
+        return self.compute_loss(merge_outputs, target_merges, num_other_elems, merge_masks, nuclear_relation_outputs, gold_nuclear_relation, len_golds, depth_batch)
     # End of training with static oracle ---------------------------------------------------
 
 
