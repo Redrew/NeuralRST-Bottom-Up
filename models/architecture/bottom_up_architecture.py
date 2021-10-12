@@ -121,9 +121,9 @@ class BottomUpArchitecture(BaseArchitecture):
             output, target = merge_outputs[idx, stack_mask], target_merges[idx, stack_mask]
             loss_multiplier = 0
             if self.config.depth_alpha != 0:
-                loss_multiplier += depths[idx][stack_mask]**self.config.depth_alpha
+                loss_multiplier += depths[idx][stack_mask] ** self.config.depth_alpha
             if self.config.elem_alpha != 0:
-                loss_multiplier += num_elems[idx][stack_mask] **self.config.elem_alpha
+                loss_multiplier += num_elems[idx][stack_mask] ** self.config.elem_alpha
             if self.config.depth_alpha == 0 and self.config.elem_alpha == 0:
                 loss_multiplier = 1
             cur_loss = (loss_multiplier * F.binary_cross_entropy(output, target, reduction="none")).sum()
