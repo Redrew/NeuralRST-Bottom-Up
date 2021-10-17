@@ -107,6 +107,8 @@ class BottomUpArchitecture(BaseArchitecture):
 
     def compute_loss(self, merge_outputs, target_merges, num_elems, state_masks, nuclear_relation, gold_nuclear_relation, len_golds, depths):
         batch_size, nuc_len, nuc_num = nuclear_relation.shape
+        depths = depths.type(torch.FloatTensor)
+        num_elems = num_elems.type(torch.FloatTensor)
         idx_ignore_nuc = self.vocab.nuclear_relation_alpha.size()
         nuc_rel_loss = F.cross_entropy(nuclear_relation.view(batch_size * nuc_len, nuc_num),
                         gold_nuclear_relation[:,:nuc_len].contiguous().view(batch_size * nuc_len),
