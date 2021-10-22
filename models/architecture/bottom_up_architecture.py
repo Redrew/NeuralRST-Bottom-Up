@@ -107,8 +107,6 @@ class BottomUpArchitecture(BaseArchitecture):
 
     def compute_loss(self, merge_outputs, target_merges, num_elems, state_masks, nuclear_relation, gold_nuclear_relation, len_golds, depths):
         batch_size, nuc_len, nuc_num = nuclear_relation.shape
-        depths = depths.type(torch.FloatTensor)
-        num_elems = num_elems.type(torch.FloatTensor)
         idx_ignore_nuc = self.vocab.nuclear_relation_alpha.size()
         nuc_rel_loss = F.cross_entropy(nuclear_relation.view(batch_size * nuc_len, nuc_num),
                         gold_nuclear_relation[:,:nuc_len].contiguous().view(batch_size * nuc_len),
@@ -300,8 +298,8 @@ class BottomUpArchitecture(BaseArchitecture):
     def decode_training(self, encoder_output, gold_bottom_up: List[GoldBottomUp], len_golds):
         batch_size, edu_num, hidden_size = encoder_output.shape
         target_merge_batch, state_batch, merge_idx_batch = [], [], []
-        depth_batch = Variable(torch.zeros(batch_size, edu_num-1, edu_num).type(torch.LongTensor), requires_grad=False)
-        num_other_elems = Variable(torch.zeros(batch_size, edu_num-1, edu_num).type(torch.LongTensor), requires_grad=False)
+        depth_batch = Variable(torch.zeros(batch_size, edu_num-1, edu_num).type(torch.FloatTensor), requires_grad=False)
+        num_other_elems = Variable(torch.zeros(batch_size, edu_num-1, edu_num).type(torch.FloatTensor), requires_grad=False)
         gold_nuclear_relation = Variable(torch.ones(batch_size, edu_num-1).type(torch.LongTensor) * self.vocab.nuclear_relation_alpha.size(), requires_grad=False)
         for idx in range(batch_size):
             self.index_output[idx] = []
@@ -366,8 +364,8 @@ class BottomUpArchitecture(BaseArchitecture):
         batch_size = len(merges)
         merge_gold = Variable(torch.zeros(batch_size, edu_num).type(torch.FloatTensor), requires_grad=False)
         nuclear_relation_gold = Variable(torch.ones(batch_size, 1).type(torch.LongTensor) * self.vocab.nuclear_relation_alpha.size(), requires_grad=False)
-        depths = Variable(torch.zeros(batch_size, edu_num).type(torch.LongTensor), requires_grad=False)
-        num_other_elems = Variable(torch.zeros(batch_size, edu_num).type(torch.LongTensor), requires_grad=False)
+        depths = Variable(torch.zeros(batch_size, edu_num).type(torch.FloatTensor), requires_grad=False)
+        num_other_elems = Variable(torch.zeros(batch_size, edu_num).type(torch.FloatTensor), requires_grad=False)
         for idx in range(batch_size):
             merge_idx, gold_merge_idx, tree = merges[idx], merges_gold[idx], trees[idx]
             if tree.done:
