@@ -228,65 +228,89 @@ class BottomUpForest:
         return forest
 
 
-def get_heights(tree, order, heights):
-    if tree.left is None:
-        return 0, 1
-    left_height, left_size = get_heights(tree.left, order, heights)
-    order += left_size
-    right_height, right_size = get_heights(tree.right, order, heights)
-    height = max(left_height, right_height) + 1
-    size = left_size + right_size
-    heights.append((order, height))
-    return height, size
-
-def get_merge_order(tree):
-    heights = []
-    get_heights(tree, 0, heights)
-    merge_order = [height for _, height in sorted(heights)]
-    return merge_order
-
-def get_merge_mask(merge_order):
-    merge_order = [float('inf')] + merge_order + [float('inf')]
-    merge_mask = []
-    for idx in range(1, len(merge_order)-1):
-        if merge_order[idx] < merge_order[idx-1] and merge_order[idx] <= merge_order[idx+1]:
-            merge_mask.append(1)
-        else:
-            merge_mask.append(0)
-    merge_mask.append(0)
-    return merge_mask
-
-def get_nuclear_relation(tree):
-    if tree.left is None:
-        return []
-    else:
-        left = get_nuclear_relation(tree.left)
-        right = get_nuclear_relation(tree.right)
-        return left + [tree.nuclear + ' - ' + tree.relation] + right
-
 # GoldBottomUp represents Bottom-Up Parser attributes
 class GoldBottomUp(BottomUpForest):
-    def __init__(self, state, merge_order, nuclear_relation, depths, gold_tree):
+    def __init__(self, state, merge_order, nuclear_relation, gold_tree):
         super().__init__(state)
         self.merge_order = merge_order
-        self.merge_mask = get_merge_mask(merge_order)
+        self.merge_mask = GoldBottomUp.get_merge_mask(merge_order)
+        self.depths = GoldBottomUp.get_depths(merge_order)
         self.merge_idxs = [i for i, m in enumerate(self.merge_mask) if m]
         self.nuclear_relation = nuclear_relation
-        self.depths = depths
         self.gold_tree = gold_tree
 
-    def make_initial_forest(self):
-        return super(GoldBottomUp, GoldBottomUp).make_initial_forest(self.span_len)
+    @staticmethod
+    def get_heights(tree, order, heights):
+        if tree.left is None:
+            return 0, 1
+        left_height, left_size = GoldBottomUp.get_heights(tree.left, order, heights)
+        order += left_size
+        right_height, right_size = GoldBottomUp.get_heights(tree.right, order, heights)
+        height = max(left_height, right_height) + 1
+        size = left_size + right_size
+        heights.append((order, height))
+        return height, size
+
+    @staticmethod
+    def get_merge_order(tree):
+        heights = []
+        GoldBottomUp.get_heights(tree, 0, heights)
+        merge_order = [height for _, height in sorted(heights)]
+        return merge_order
+
+    @staticmethod
+    def get_nuclear_relation(tree):
+        if tree.left is None:
+            return []
+        else:
+            left = GoldBottomUp.get_nuclear_relation(tree.left)
+            right = GoldBottomUp.get_nuclear_relation(tree.right)
+            return left + [tree.nuclear + ' - ' + tree.relation] + right
+
+    @staticmethod
+    def get_merge_mask(merge_order):
+        merge_order = [float('inf')] + merge_order + [float('inf')]
+        merge_mask = []
+        for idx in range(1, len(merge_order)-1):
+            if merge_order[idx] < merge_order[idx-1] and merge_order[idx] <= merge_order[idx+1]:
+                merge_mask.append(1)
+            else:
+                merge_mask.append(0)
+        merge_mask.append(0)
+        return merge_mask
+
+    @staticmethod
+    def get_depths(merge_order):
+        class Unit:
+            parent = None
+        merge_order = [order for order in merge_order]
+        units = [Unit() for _ in range(len(merge_order) + 1)]
+        state = [unit for unit in units]
+        depths = []
+        while len(state) > 1:
+            idx = GoldBottomUp.get_merge_mask(merge_order).index(1)
+            merged_unit = Unit()
+            state[idx].parent = merged_unit
+            state[idx+1].parent = merged_unit
+            state[idx] = merged_unit
+            del state[idx+1]
+            del merge_order[idx]
+        for unit in units:
+            depth = 0
+            while unit.parent:
+                unit = unit.parent
+                depth += 1
+            depths.append(depth)
+        return depths
 
     @staticmethod
     def from_tree(tree):
         if tree is None:
-            return GoldBottomUp([], [], [], [], None)
+            return GoldBottomUp([], [], [], None)
 
-        merge_order = get_merge_order(tree)
-        nuclear_relation = get_nuclear_relation(tree)
+        merge_order = GoldBottomUp.get_merge_order(tree)
+        nuclear_relation = GoldBottomUp.get_nuclear_relation(tree)
         state = []
-        depths = []
         nodes = tree.edu_span[-1]
         queue = [(0, tree)]
         while queue:
@@ -297,15 +321,16 @@ class GoldBottomUp(BottomUpForest):
                 queue.append((d + 1, t.left))
             else:
                 state.append(t)
-                depths.append(d)
 
-        return GoldBottomUp(state, merge_order, nuclear_relation, depths, tree)
+        return GoldBottomUp(state, merge_order, nuclear_relation, tree)
+
+    def make_initial_forest(self):
+        return super(GoldBottomUp, GoldBottomUp).make_initial_forest(self.span_len)
 
     def merge(self, merge_idx, nuclear, relation):
         state = self.state.copy()
         merge_order = self.merge_order.copy()
         nuclear_relation = self.nuclear_relation.copy()
-        depths = self.depths.copy()
 
         left, right = state[merge_idx], state[merge_idx+1]
         merge_span = (left.edu_span[0], right.edu_span[1])
@@ -313,12 +338,10 @@ class GoldBottomUp(BottomUpForest):
         new_state_node.left = left
         new_state_node.right = right
         state[merge_idx+1] = new_state_node
-        depths[merge_idx+1] -= 1
         del state[merge_idx]
         del nuclear_relation[merge_idx]
         del merge_order[merge_idx]
-        del depths[merge_idx]
-        return GoldBottomUp(state, merge_order, nuclear_relation, depths, self.gold_tree)
+        return GoldBottomUp(state, merge_order, nuclear_relation, self.gold_tree)
  
 
 # A single EDU representation
