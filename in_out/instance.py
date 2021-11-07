@@ -201,6 +201,10 @@ class BottomUpForest:
         self.state_spans = [t.edu_span for t in state]
         self.span_len = state[-1].edu_span[1] + 1 if state else 0
         self.done = len(state) <= 1
+        self.merge_history = []
+
+    def set_merge_history(self, merge_history):
+        self.merge_history = merge_history
 
     @staticmethod
     def make_initial_forest(num_edus):
@@ -213,12 +217,15 @@ class BottomUpForest:
 
     def merge(self, merge_idx, nuclear, relation):
         state = self.state.copy()
+        merge_history = self.merge_history.copy() + [(merge_idx, nuclear, relation)]
         merge_span = (state[merge_idx].edu_span[0], state[merge_idx+1].edu_span[1])
         new_state_node = Tree(merge_span, nuclear, relation)
         new_state_node.left = state[merge_idx]
         new_state_node.right = state[merge_idx+1]
         state = state[:merge_idx] + [new_state_node] + state[merge_idx+2:]
-        return BottomUpForest(state)
+        forest = BottomUpForest(state)
+        forest.set_merge_history(merge_history)
+        return forest
 
 
 def get_heights(tree, order, heights):
