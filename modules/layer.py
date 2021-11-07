@@ -375,8 +375,6 @@ class MyLSTM(nn.Module):
             h_next, c_next = cell(input=input[time], hx=hx)
             h_next = h_next*masks[time] + initial[0]*(~masks[time])
             c_next = c_next*masks[time] + initial[1]*(~masks[time])
-            if torch.any(torch.isnan(h_next)):
-                print("Bad")
             output.append(h_next)
             if drop_masks is not None: h_next = h_next * drop_masks
             hx = (h_next, c_next)
