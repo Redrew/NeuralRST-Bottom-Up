@@ -1,5 +1,3 @@
-__author__ = 'Fajri Koto and Andrew Shen'
-
 import copy
 import operator
 import numpy as np
